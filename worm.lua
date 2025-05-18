@@ -8,7 +8,16 @@ local term_target = term.redirect(monitor) -- Redirect terminal output to the mo
 local W, H = monitor.getSize()
 
 -- Game Configuration
-local WORM_CHAR = "\140" -- Solid block character '█'
+local WORM_CHARS = {
+    HORIZONTAL = "\196", -- ─
+    VERTICAL = "\179",   -- │
+    TOP_LEFT = "\218",   -- ┌
+    TOP_RIGHT = "\191",  -- ┐
+    BOTTOM_LEFT = "\192",-- └
+    BOTTOM_RIGHT = "\217",-- ┘
+    -- Fallback for single segment or if direction is ambiguous (should not happen with dx,dy)
+    DOT = "\140"         -- █ 
+}
 local FOOD_CHAR = "\042" -- Asterisk '*'
 local EMPTY_CHAR = " "
 local INITIAL_SPEED = 0.1 -- Seconds per frame
@@ -76,9 +85,63 @@ local function draw()
     monitor.clear()
 
     -- Draw worm
-    for _, segment in ipairs(worm) do
+    for i = 1, #worm do
+        local segment = worm[i]
+        local charToDraw = WORM_CHARS.DOT -- Default character
+
+        if #worm == 1 then -- Single segment worm
+            if dx == 1 or dx == -1 then -- Moving horizontally
+                charToDraw = WORM_CHARS.HORIZONTAL
+            elseif dy == 1 or dy == -1 then -- Moving vertically
+                charToDraw = WORM_CHARS.VERTICAL
+            end
+        else
+            local prevSegment = worm[i-1] -- nil for head
+            local nextSegment = worm[i+1] -- nil for tail
+
+            if not prevSegment then -- Head (i == 1)
+                local nextSeg = worm[2] -- Must exist if #worm > 1
+                if segment.x == nextSeg.x then -- Vertical movement relative to next segment
+                    charToDraw = WORM_CHARS.VERTICAL
+                elseif segment.y == nextSeg.y then -- Horizontal movement relative to next segment
+                    charToDraw = WORM_CHARS.HORIZONTAL
+                end
+            elseif not nextSegment then -- Tail (i == #worm)
+                local prevSeg = worm[#worm-1] -- Must exist
+                if segment.x == prevSeg.x then -- Vertical connection to previous
+                    charToDraw = WORM_CHARS.VERTICAL
+                elseif segment.y == prevSeg.y then -- Horizontal connection to previous
+                    charToDraw = WORM_CHARS.HORIZONTAL
+                end
+            else -- Body segment (has previous and next)
+                local v_prev_x = segment.x - prevSegment.x
+                local v_prev_y = segment.y - prevSegment.y
+                local v_next_x = nextSegment.x - segment.x
+                local v_next_y = nextSegment.y - segment.y
+
+                if v_prev_y == 0 and v_next_y == 0 then -- Straight horizontal
+                    charToDraw = WORM_CHARS.HORIZONTAL
+                elseif v_prev_x == 0 and v_next_x == 0 then -- Straight vertical
+                    charToDraw = WORM_CHARS.VERTICAL
+                else -- Corner piece
+                    if (v_prev_x == 0 and v_prev_y == 1 and v_next_x == 1 and v_next_y == 0) or  -- From Up, To Right
+                       (v_prev_x == -1 and v_prev_y == 0 and v_next_x == 0 and v_next_y == -1) then -- From Right, To Up
+                        charToDraw = WORM_CHARS.BOTTOM_LEFT -- └
+                    elseif (v_prev_x == 0 and v_prev_y == 1 and v_next_x == -1 and v_next_y == 0) or -- From Up, To Left
+                           (v_prev_x == 1 and v_prev_y == 0 and v_next_x == 0 and v_next_y == -1) then  -- From Left, To Up
+                        charToDraw = WORM_CHARS.BOTTOM_RIGHT -- ┘
+                    elseif (v_prev_x == 0 and v_prev_y == -1 and v_next_x == 1 and v_next_y == 0) or -- From Down, To Right
+                           (v_prev_x == -1 and v_prev_y == 0 and v_next_x == 0 and v_next_y == 1) then -- From Right, To Down
+                        charToDraw = WORM_CHARS.TOP_LEFT -- ┌
+                    elseif (v_prev_x == 0 and v_prev_y == -1 and v_next_x == -1 and v_next_y == 0) or -- From Down, To Left
+                           (v_prev_x == 1 and v_prev_y == 0 and v_next_x == 0 and v_next_y == 1) then  -- From Left, To Down
+                        charToDraw = WORM_CHARS.TOP_RIGHT -- ┐
+                    end
+                end
+            end
+        end
         monitor.setCursorPos(segment.x, segment.y)
-        monitor.write(WORM_CHAR)
+        monitor.write(charToDraw)
     end
 
     -- Draw food
