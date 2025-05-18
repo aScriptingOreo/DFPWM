@@ -26,21 +26,50 @@ local function drawBranchLine(startX, startY, length, direction)
     for i = 1, length do
         local currentX = startX + i
         local currentY = startY + (i * direction)
-        if currentX <= width and currentY >= 1 and currentY <= height then
+
+        if currentX >= 1 and currentX <= width and currentY >= 1 and currentY <= height then
+            local charToDraw
+            if direction == 1 then
+                charToDraw = "\\" -- Downwards
+            else
+                charToDraw = "/"  -- Upwards
+            end
+
+            -- Add variance
+            local randVal = math.random(1, 40)
+            if randVal == 1 then
+                charToDraw = "*" -- Glitch
+            elseif randVal == 2 then
+                charToDraw = "+" -- Junction/instability
+            end
+
             monitor.setCursorPos(currentX, currentY)
-            monitor.write("/")
+            monitor.write(charToDraw)
         end
     end
 end
 
 -- Function to update branches
 local function updateBranches()
-    for i, branch in ipairs(branches) do
+    local i = 1
+    while i <= #branches do
+        local branch = branches[i]
         branch.startX = branch.startX - 1
-        if branch.startX < 1 then
+
+        -- Calculate effective length for growth
+        local distanceMoved = branch.spawnConnectionX - branch.startX
+        local growthAmount = math.floor(distanceMoved / 3) -- Grows 1 unit for every 3 units moved left
+        local currentEffectiveLength = branch.initialLength + growthAmount
+        currentEffectiveLength = math.min(currentEffectiveLength, branch.maxLength)
+        currentEffectiveLength = math.max(currentEffectiveLength, 1) -- Ensure length is at least 1
+
+        -- Remove branch if it's completely off-screen to the left
+        if branch.startX + currentEffectiveLength < 1 then
             table.remove(branches, i)
+            -- No increment for i, as the next element is now at current i
         else
-            drawBranchLine(branch.startX, branch.startY, branch.length, branch.direction)
+            drawBranchLine(branch.startX, branch.startY, currentEffectiveLength, branch.direction)
+            i = i + 1
         end
     end
 end
@@ -66,14 +95,21 @@ while true do
 
     -- Randomly spawn branching lines
     if math.random(1, 10) == 1 then
-        local branchLength = math.random(3, 7)
+        local initialLength = math.random(2, 5) -- Start smaller
+        local maxLength = initialLength + math.random(3, 7) -- Max growth
         local direction = math.random(0, 1) == 1 and 1 or -1
-        -- Branches spawn from the current end of the main line
-        local spawnStartX = mainLineCurrentX + mainLineFixedLength - 1
+        local spawnConnectionPointX = mainLineCurrentX + mainLineFixedLength - 1
         local startY = centerY
-        -- Only spawn branches if the main line is somewhat formed or fully stationary
-        if mainLineIsStationary or spawnStartX >= 1 then 
-            table.insert(branches, {startX = spawnStartX, startY = startY, length = branchLength, direction = direction})
+        
+        if mainLineIsStationary or spawnConnectionPointX >= 1 then
+            table.insert(branches, {
+                startX = spawnConnectionPointX,
+                startY = startY,
+                initialLength = initialLength,
+                maxLength = maxLength,
+                direction = direction,
+                spawnConnectionX = spawnConnectionPointX -- Store the X at which it connected to the main line
+            })
         end
     end
 
