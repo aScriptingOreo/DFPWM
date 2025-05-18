@@ -169,16 +169,11 @@ local function update()
                 targetPath = pathFound
                 table.remove(targetPath, 1) -- Remove current head's position from path to follow
             else
-                gameOver = true -- No path to food, or path is just the current spot (shouldn't happen if food exists)
+                gameOver = true -- No path to food, or path is just the current spot
                 return
             end
         else
-            -- No food (e.g., game won, or just eaten and new one hasn't spawned)
-            -- For now, if no food and no path, worm effectively stops or game ends.
-            -- If game is won, gameOver would be true.
-            -- If food was just eaten, spawnFood should be called before next update.
-            -- If somehow no food and game not over, this is a trap state.
-            gameOver = true -- Or implement a default "safe move" if no food
+            gameOver = true -- No food and no path, or game won
             return
         end
     end
@@ -190,34 +185,12 @@ local function update()
         dx = newHeadX - head.x
         dy = newHeadY - head.y
     else
-        -- Should have been caught by path finding logic or game over
+        -- This case should ideally be covered by the path finding logic setting gameOver
         gameOver = true 
         return
     end
 
     local newHead = {x = newHeadX, y = newHeadY}
-    
-    -- Final safety check before committing the move from path (should be redundant if BFS is correct)
-    if not isSafeMove(newHead.x, newHead.y, worm) then
-         -- This implies the path became invalid, perhaps due to worm growth not perfectly handled by isSafeForPathfinding
-         -- or an edge case. Recalculate path or end game.
-         targetPath = nil -- Force recalculation
-         -- For simplicity, let's try one more time to find a path from the current head.
-         -- If this also fails, then game over.
-         local emergencyPath = findPathToFood(head.x, head.y, food.x, food.y, worm)
-         if emergencyPath and #emergencyPath > 1 then
-            targetPath = emergencyPath
-            table.remove(targetPath, 1)
-            local nextEmergencyStep = table.remove(targetPath,1)
-            newHead = {x = nextEmergencyStep.x, y = nextEmergencyStep.y}
-            dx = newHead.x - head.x
-            dy = newHead.y - head.y
-         else
-            gameOver = true
-            return
-         end
-    end
-
 
     table.insert(worm, 1, newHead) -- Add new head
 
