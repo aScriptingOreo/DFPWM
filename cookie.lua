@@ -1,6 +1,5 @@
-local shell = require("shell")
 local fs = require("fs")
-local http = require("http") -- Required if wget is not available or for manual fallback
+local http = require("http")
 
 local args = {...}
 
@@ -40,24 +39,36 @@ else
     print("Local file not found, no deletion needed: " .. localFilename)
 end
 
--- Step 2: Fetch the new file using wget
+-- Step 2: Fetch the new file using http.get
 print("Fetching " .. downloadURL .. " -> " .. localFilename)
 
-local success, reason = shell.run("wget", downloadURL, localFilename)
+local handle, err = http.get(downloadURL)
 
-if success then
-    if fs.exists(localFilename) then
-        print("Successfully fetched and saved: " .. localFilename)
+if handle then
+    local content = handle.readAll()
+    handle.close()
+
+    if content then
+        local file, writeErr = fs.open(localFilename, "w")
+        if file then
+            file.write(content)
+            file.close()
+            print("Successfully fetched and saved: " .. localFilename)
+        else
+            print("Error: Failed to open local file for writing: " .. localFilename)
+            if writeErr then
+                print("Reason: " .. writeErr)
+            end
+        end
     else
-        -- This case might happen if wget reported success but the file wasn't created
-        -- (unlikely with standard wget behavior but good to be aware of)
-        print("Error: wget reported success, but file not found: " .. localFilename)
-        print("Reason from wget (if any): " .. tostring(reason))
+        print("Error: Failed to read content from URL.")
+        -- err from http.get might be more relevant here if content is nil after successful handle
+        if err then print("Initial HTTP Error (if any): " .. err) end
     end
 else
-    print("Error: Failed to fetch file.")
-    if reason then
-        print("Reason: " .. reason)
+    print("Error: Failed to fetch file using http.get.")
+    if err then
+        print("Reason: " .. err)
     end
     print("Please check the URL and your network connection.")
     print("URL attempted: " .. downloadURL)
