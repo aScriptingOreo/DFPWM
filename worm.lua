@@ -17,30 +17,13 @@ local START_LENGTH = 1
 -- Game State
 local worm
 local food
-local path
-local pathIndex
+local dx, dy -- Added: Current direction of the worm (dx, dy)
 local score
 local gameOver
 local gameWon
 local gameSpeed
 
-local function generateHamiltonianPath(gridW, gridH)
-    local p = {}
-    for y = 1, gridH do
-        if y % 2 == 1 then -- Move right
-            for x = 1, gridW do
-                table.insert(p, {x = x, y = y})
-            end
-        else -- Move left
-            for x = gridW, 1, -1 do
-                table.insert(p, {x = x, y = y})
-            end
-        end
-    end
-    return p
-end
-
-local function isPositionInWorm(posX, posY, currentWorm)
+local function isPositionOccupied(posX, posY, currentWorm) -- Renamed for clarity, or keep as isPositionInWorm
     for _, segment in ipairs(currentWorm) do
         if segment.x == posX and segment.y == posY then
             return true
@@ -50,8 +33,8 @@ local function isPositionInWorm(posX, posY, currentWorm)
 end
 
 local function spawnFood()
-    if score == (W * H) - START_LENGTH then -- No space left for food if screen is almost full
-        food = nil -- Or handle win condition more explicitly
+    if score == (W * H) - START_LENGTH then 
+        food = nil 
         return
     end
 
@@ -59,7 +42,7 @@ local function spawnFood()
     repeat
         foodX = math.random(1, W)
         foodY = math.random(1, H)
-    until not isPositionInWorm(foodX, foodY, worm)
+    until not isPositionOccupied(foodX, foodY, worm) -- Use the general check
     food = {x = foodX, y = foodY}
 end
 
@@ -67,20 +50,16 @@ local function initGame()
     monitor.clear()
     monitor.setCursorPos(1,1)
 
-    path = generateHamiltonianPath(W, H)
-    pathIndex = START_LENGTH
-
     worm = {}
+    -- Initialize worm at the center, facing right
+    local startX = math.floor(W / 2)
+    local startY = math.floor(H / 2)
     for i = 1, START_LENGTH do
-        -- Initialize worm segments based on the start of the path
-        if path[i] then
-             table.insert(worm, 1, {x = path[i].x, y = path[i].y}) -- Head is worm[1]
-        else
-            -- This case should ideally not happen if START_LENGTH is small
-            -- and path is generated correctly. For safety, place at a default.
-            table.insert(worm, 1, {x = math.floor(W/2) + 1 - i, y = math.floor(H/2)})
-        end
+        -- Worm segments are added to the front, so build it backwards from head
+        table.insert(worm, 1, {x = startX - (i-1), y = startY}) 
     end
+    dx = 1 -- Initial direction: right
+    dy = 0
     
     score = 0
     gameOver = false
@@ -118,36 +97,98 @@ local function draw()
     end
 end
 
+-- Helper for update: checks if a potential next head position is valid
+local function isSafeMove(nextX, nextY, currentWorm)
+    if nextX < 1 or nextX > W or nextY < 1 or nextY > H then
+        return false -- Wall collision
+    end
+    -- Check collision with worm's own body.
+    -- The head cannot move into any cell currently occupied by any segment.
+    for _, segment in ipairs(currentWorm) do
+        if segment.x == nextX and segment.y == nextY then
+            return false -- Self-collision
+        end
+    end
+    return true
+end
+
 local function update()
     if gameOver then return end
 
-    if pathIndex > #path then
-        -- This means the worm has traversed the entire path.
-        -- If it hasn't filled the screen, it's a form of game over or win based on score.
-        if score >= (W * H) - START_LENGTH then
-            gameWon = true
+    local head = worm[1]
+    local chosenNextX, chosenNextY
+    local chosenDx, chosenDy = dx, dy -- Default to current direction, might be overridden
+
+    if not food then
+        -- No food: try to continue straight. If blocked, try to turn.
+        -- This state should be rare if food spawns immediately.
+        local currentDirX, currentDirY = head.x + dx, head.y + dy
+        if isSafeMove(currentDirX, currentDirY, worm) then
+            chosenNextX, chosenNextY = currentDirX, currentDirY
+            -- chosenDx, chosenDy remain dx, dy
+        else
+            -- Try turning left (relative to current dx, dy)
+            local leftTurnDx, leftTurnDy = -dy, dx
+            local tryLeftX, tryLeftY = head.x + leftTurnDx, head.y + leftTurnDy
+            if isSafeMove(tryLeftX, tryLeftY, worm) then
+                chosenNextX, chosenNextY = tryLeftX, tryLeftY
+                chosenDx, chosenDy = leftTurnDx, leftTurnDy
+            else
+                -- Try turning right (relative to current dx, dy)
+                local rightTurnDx, rightTurnDy = dy, -dx
+                local tryRightX, tryRightY = head.x + rightTurnDx, head.y + rightTurnDy
+                if isSafeMove(tryRightX, tryRightY, worm) then
+                    chosenNextX, chosenNextY = tryRightX, tryRightY
+                    chosenDx, chosenDy = rightTurnDx, rightTurnDy
+                else
+                    gameOver = true -- Trapped
+                    return
+                end
+            end
         end
-        gameOver = true
-        return
+    else -- Food exists, make an intelligent move
+        local potentialMoves = {}
+
+        -- Define potential directions: straight, left turn, right turn
+        local directionsToTry = {
+            {ddx = dx,    ddy = dy,    isStraight = true},  -- Straight
+            {ddx = -dy,   ddy = dx,    isStraight = false}, -- Left relative
+            {ddx = dy,    ddy = -dx,   isStraight = false}  -- Right relative
+        }
+
+        for _, dirInfo in ipairs(directionsToTry) do
+            local nextX, nextY = head.x + dirInfo.ddx, head.y + dirInfo.ddy
+            if isSafeMove(nextX, nextY, worm) then
+                table.insert(potentialMoves, {
+                    x = nextX, y = nextY,
+                    newDx = dirInfo.ddx, newDy = dirInfo.ddy,
+                    dist = math.abs(nextX - food.x) + math.abs(nextY - food.y),
+                    isStraight = dirInfo.isStraight
+                })
+            end
+        end
+
+        if #potentialMoves == 0 then
+            gameOver = true -- Trapped, no safe moves
+            return
+        end
+
+        -- Sort moves: by distance (ascending), then prefer straight moves
+        table.sort(potentialMoves, function(a, b)
+            if a.dist == b.dist then
+                return a.isStraight -- true comes before false (so straight is preferred)
+            end
+            return a.dist < b.dist
+        end)
+        
+        local bestMove = potentialMoves[1]
+        chosenNextX, chosenNextY = bestMove.x, bestMove.y
+        chosenDx, chosenDy = bestMove.newDx, bestMove.newDy
     end
 
-    local nextHeadPos = path[pathIndex]
-    if not nextHeadPos then -- Should not happen if pathIndex is managed correctly
-        gameOver = true
-        return
-    end
+    dx, dy = chosenDx, chosenDy -- Update the worm's main direction
 
-    local newHead = {x = nextHeadPos.x, y = nextHeadPos.y}
-
-    -- Check for collision with walls (shouldn't happen with this path logic if grid is standard)
-    if newHead.x < 1 or newHead.x > W or newHead.y < 1 or newHead.y > H then
-        gameOver = true
-        return
-    end
-    
-    -- Self-collision is theoretically avoided by the Hamiltonian path if the worm isn't too long
-    -- for a "loop" in the path on small grids. For a simple boustrophedon, this is safe.
-
+    local newHead = {x = chosenNextX, y = chosenNextY}
     table.insert(worm, 1, newHead) -- Add new head
 
     if food and newHead.x == food.x and newHead.y == food.y then
@@ -161,11 +202,8 @@ local function update()
         end
     else
         -- Remove tail if not eating food
-        local tail = table.remove(worm)
-        -- No need to clear the tail's old position on screen as monitor.clear() handles it
+        table.remove(worm) 
     end
-
-    pathIndex = pathIndex + 1
 end
 
 -- Main Game Loop
