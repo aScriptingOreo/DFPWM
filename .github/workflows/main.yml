@@ -1,7 +1,8 @@
 name: uploadReleaseToS3
 on:
-  release:
-    types: [created] # Trigger on release creation
+  push:
+    branches:
+      - main
 
 jobs:
   deploy:
