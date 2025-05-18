@@ -17,7 +17,8 @@ local START_LENGTH = 1
 -- Game State
 local worm
 local food
-local dx, dy -- Added: Current direction of the worm (dx, dy)
+local dx, dy -- Current direction of the worm (dx, dy)
+local targetPath -- Added: Stores the calculated path to food
 local score
 local gameOver
 local gameWon
@@ -61,6 +62,8 @@ local function initGame()
     dx = 1 -- Initial direction: right
     dy = 0
     
+    targetPath = nil -- Initialize targetPath
+
     score = 0
     gameOver = false
     gameWon = false
@@ -97,111 +100,138 @@ local function draw()
     end
 end
 
--- Helper for update: checks if a potential next head position is valid
-local function isSafeMove(nextX, nextY, currentWorm)
+-- Helper for pathfinding: checks if a cell is safe to move into during path search
+local function isSafeForPathfinding(nextX, nextY, currentWorm)
     if nextX < 1 or nextX > W or nextY < 1 or nextY > H then
         return false -- Wall collision
     end
-    -- Check collision with worm's own body.
-    -- The head cannot move into any cell currently occupied by any segment.
-    for _, segment in ipairs(currentWorm) do
+    -- Check collision with worm's body, EXCLUDING the tail segment
+    -- because the tail will move by the time the head gets there.
+    for i = 1, #currentWorm - 1 do -- Iterate up to the segment before the tail
+        local segment = currentWorm[i]
         if segment.x == nextX and segment.y == nextY then
-            return false -- Self-collision
+            return false -- Collision with non-tail part of worm
         end
     end
     return true
 end
 
+-- BFS pathfinding function
+local function findPathToFood(headX, headY, foodX, foodY, currentWorm)
+    local queue = {}
+    local visited = {} -- To store visited cells as "x,y" strings
+
+    -- Initial node: current head position, path starts with head
+    table.insert(queue, {x = headX, y = headY, path = {{x = headX, y = headY}}})
+    visited[headX .. "," .. headY] = true
+
+    while #queue > 0 do
+        local current = table.remove(queue, 1) -- Dequeue (FIFO)
+
+        if current.x == foodX and current.y == foodY then
+            return current.path -- Path found
+        end
+
+        -- Explore neighbors (Up, Down, Left, Right)
+        local neighbors = {
+            {nx = current.x, ny = current.y - 1}, -- Up
+            {nx = current.x, ny = current.y + 1}, -- Down
+            {nx = current.x - 1, ny = current.y}, -- Left
+            {nx = current.x + 1, ny = current.y}  -- Right
+        }
+
+        for _, neighbor in ipairs(neighbors) do
+            local visitedKey = neighbor.nx .. "," .. neighbor.ny
+            if not visited[visitedKey] and isSafeForPathfinding(neighbor.nx, neighbor.ny, currentWorm) then
+                visited[visitedKey] = true
+                local newPath = {}
+                for _, p_node in ipairs(current.path) do table.insert(newPath, p_node) end
+                table.insert(newPath, {x = neighbor.nx, y = neighbor.ny})
+                table.insert(queue, {x = neighbor.nx, y = neighbor.ny, path = newPath})
+            end
+        end
+    end
+    return nil -- No path found
+end
+
+
 local function update()
     if gameOver then return end
 
     local head = worm[1]
-    local chosenNextX, chosenNextY
-    local chosenDx, chosenDy = dx, dy -- Default to current direction, might be overridden
+    local newHeadX, newHeadY
 
-    if not food then
-        -- No food: try to continue straight. If blocked, try to turn.
-        -- This state should be rare if food spawns immediately.
-        local currentDirX, currentDirY = head.x + dx, head.y + dy
-        if isSafeMove(currentDirX, currentDirY, worm) then
-            chosenNextX, chosenNextY = currentDirX, currentDirY
-            -- chosenDx, chosenDy remain dx, dy
-        else
-            -- Try turning left (relative to current dx, dy)
-            local leftTurnDx, leftTurnDy = -dy, dx
-            local tryLeftX, tryLeftY = head.x + leftTurnDx, head.y + leftTurnDy
-            if isSafeMove(tryLeftX, tryLeftY, worm) then
-                chosenNextX, chosenNextY = tryLeftX, tryLeftY
-                chosenDx, chosenDy = leftTurnDx, leftTurnDy
+    -- Manage Path
+    if not targetPath or #targetPath == 0 then
+        if food then
+            local pathFound = findPathToFood(head.x, head.y, food.x, food.y, worm)
+            if pathFound and #pathFound > 1 then -- Path includes current head, so need at least 2 nodes
+                targetPath = pathFound
+                table.remove(targetPath, 1) -- Remove current head's position from path to follow
             else
-                -- Try turning right (relative to current dx, dy)
-                local rightTurnDx, rightTurnDy = dy, -dx
-                local tryRightX, tryRightY = head.x + rightTurnDx, head.y + rightTurnDy
-                if isSafeMove(tryRightX, tryRightY, worm) then
-                    chosenNextX, chosenNextY = tryRightX, tryRightY
-                    chosenDx, chosenDy = rightTurnDx, rightTurnDy
-                else
-                    gameOver = true -- Trapped
-                    return
-                end
+                gameOver = true -- No path to food, or path is just the current spot (shouldn't happen if food exists)
+                return
             end
-        end
-    else -- Food exists, make an intelligent move
-        local potentialMoves = {}
-
-        -- Define potential directions: straight, left turn, right turn
-        local directionsToTry = {
-            {ddx = dx,    ddy = dy,    isStraight = true},  -- Straight
-            {ddx = -dy,   ddy = dx,    isStraight = false}, -- Left relative
-            {ddx = dy,    ddy = -dx,   isStraight = false}  -- Right relative
-        }
-
-        for _, dirInfo in ipairs(directionsToTry) do
-            local nextX, nextY = head.x + dirInfo.ddx, head.y + dirInfo.ddy
-            if isSafeMove(nextX, nextY, worm) then
-                table.insert(potentialMoves, {
-                    x = nextX, y = nextY,
-                    newDx = dirInfo.ddx, newDy = dirInfo.ddy,
-                    dist = math.abs(nextX - food.x) + math.abs(nextY - food.y),
-                    isStraight = dirInfo.isStraight
-                })
-            end
-        end
-
-        if #potentialMoves == 0 then
-            gameOver = true -- Trapped, no safe moves
+        else
+            -- No food (e.g., game won, or just eaten and new one hasn't spawned)
+            -- For now, if no food and no path, worm effectively stops or game ends.
+            -- If game is won, gameOver would be true.
+            -- If food was just eaten, spawnFood should be called before next update.
+            -- If somehow no food and game not over, this is a trap state.
+            gameOver = true -- Or implement a default "safe move" if no food
             return
         end
-
-        -- Sort moves: by distance (ascending), then prefer straight moves
-        table.sort(potentialMoves, function(a, b)
-            if a.dist == b.dist then
-                return a.isStraight -- true comes before false (so straight is preferred)
-            end
-            return a.dist < b.dist
-        end)
-        
-        local bestMove = potentialMoves[1]
-        chosenNextX, chosenNextY = bestMove.x, bestMove.y
-        chosenDx, chosenDy = bestMove.newDx, bestMove.newDy
     end
 
-    dx, dy = chosenDx, chosenDy -- Update the worm's main direction
+    if targetPath and #targetPath > 0 then
+        local nextStep = table.remove(targetPath, 1)
+        newHeadX, newHeadY = nextStep.x, nextStep.y
+        -- Update dx, dy based on the move (optional, but good for consistency if used elsewhere)
+        dx = newHeadX - head.x
+        dy = newHeadY - head.y
+    else
+        -- Should have been caught by path finding logic or game over
+        gameOver = true 
+        return
+    end
 
-    local newHead = {x = chosenNextX, y = chosenNextY}
+    local newHead = {x = newHeadX, y = newHeadY}
+    
+    -- Final safety check before committing the move from path (should be redundant if BFS is correct)
+    if not isSafeMove(newHead.x, newHead.y, worm) then
+         -- This implies the path became invalid, perhaps due to worm growth not perfectly handled by isSafeForPathfinding
+         -- or an edge case. Recalculate path or end game.
+         targetPath = nil -- Force recalculation
+         -- For simplicity, let's try one more time to find a path from the current head.
+         -- If this also fails, then game over.
+         local emergencyPath = findPathToFood(head.x, head.y, food.x, food.y, worm)
+         if emergencyPath and #emergencyPath > 1 then
+            targetPath = emergencyPath
+            table.remove(targetPath, 1)
+            local nextEmergencyStep = table.remove(targetPath,1)
+            newHead = {x = nextEmergencyStep.x, y = nextEmergencyStep.y}
+            dx = newHead.x - head.x
+            dy = newHead.y - head.y
+         else
+            gameOver = true
+            return
+         end
+    end
+
+
     table.insert(worm, 1, newHead) -- Add new head
 
     if food and newHead.x == food.x and newHead.y == food.y then
         score = score + 1
-        if score >= (W * H) - START_LENGTH then -- Max possible score
+        targetPath = nil -- Food eaten, need to recalculate path for new food
+        if score >= (W * H) - START_LENGTH then
             gameWon = true
             gameOver = true
-            food = nil -- No more food to spawn
+            food = nil
         else
-            spawnFood()
+            spawnFood() -- New food will be spawned, path recalculated in next update cycle
         end
     else
-        -- Remove tail if not eating food
         table.remove(worm) 
     end
 end
