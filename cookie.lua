@@ -1,6 +1,3 @@
-local fs = require("fs")
-local http = require("http")
-
 local args = {...}
 
 local function printUsage()
@@ -24,7 +21,7 @@ end
 local localFilename = baseFilename -- File will be saved locally as <filename> (e.g., "worm")
 local remoteFilenameForURL = baseFilename .. ".lua" -- File on GitHub is <filename>.lua (e.g., "worm.lua")
 
-local baseURL = "https://raw.githubusercontent.com/aScriptingOreo/DFPWM/refs/heads/main/"
+local baseURL = "https://s3.7thseraph.org/browser/wiki.avakot.org/oreo.temp/" -- Updated baseURL
 local downloadURL = baseURL .. remoteFilenameForURL
 
 -- Step 1: Delete the existing local file
