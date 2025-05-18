@@ -1,0 +1,112 @@
+name: uploadReleaseToS3
+on:
+  release:
+    types: [created] # Trigger on release creation
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install AWS CLI v2
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+
+      - name: Validate and Prepare Release Directory # Renamed step
+        id: prepare # Added id to potentially pass outputs if needed later
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -e # Exit immediately if a command exits with a non-zero status.
+
+          echo "Release tag: ${RELEASE_TAG}"
+          RELEASE_DIR_PATH="./${RELEASE_TAG}"
+
+          # Check if the release directory exists
+          if [ ! -d "${RELEASE_DIR_PATH}" ]; then
+            echo "Error: Directory matching release tag '${RELEASE_TAG}' not found."
+            exit 1
+          fi
+          echo "Found release directory: ${RELEASE_DIR_PATH}"
+
+          # --- Directory Validation and Renaming ---
+          MISSING_DIRS=false
+          declare -A DIRS_TO_CHECK=( ["Graphics"]="Graphics" ["Icons"]="Icons" ["Logos"]="Logos" ) # Expected:Actual
+
+          # Find actual directory names (case-insensitive) and check existence
+          for EXPECTED in "${!DIRS_TO_CHECK[@]}"; do
+            FOUND_DIR=$(find "${RELEASE_DIR_PATH}" -maxdepth 1 -iname "$EXPECTED" -type d -print -quit)
+            if [ -z "$FOUND_DIR" ]; then
+              echo "Error: Required subdirectory '$EXPECTED' not found in ${RELEASE_DIR_PATH}."
+              MISSING_DIRS=true
+            else
+              ACTUAL_NAME=$(basename "$FOUND_DIR")
+              DIRS_TO_CHECK["$EXPECTED"]="$ACTUAL_NAME" # Store the actual found name
+              echo "Found required directory: $FOUND_DIR (Actual name: $ACTUAL_NAME)"
+            fi
+          done
+
+          if [ "$MISSING_DIRS" = true ]; then
+            exit 1 # Exit if any required directory is missing
+          fi
+
+          # Rename directories if capitalization is incorrect
+          # Corrected loop syntax: Iterate over keys, then get value
+          for EXPECTED in "${!DIRS_TO_CHECK[@]}"; do
+            ACTUAL="${DIRS_TO_CHECK[$EXPECTED]}" # Get the actual directory name found
+            if [ "$EXPECTED" != "$ACTUAL" ]; then
+              echo "Renaming '${RELEASE_DIR_PATH}/${ACTUAL}' to '${RELEASE_DIR_PATH}/${EXPECTED}'"
+              mv "${RELEASE_DIR_PATH}/${ACTUAL}" "${RELEASE_DIR_PATH}/${EXPECTED}"
+            fi
+          done
+          # --- End Validation ---
+
+          echo "Renaming release directory ${RELEASE_DIR_PATH} to ./release"
+          mv "${RELEASE_DIR_PATH}" ./release
+
+          # Check if avakot.icons directory exists and copy it to the release directory
+          if [ -d "./avakot.icons" ]; then
+            echo "Copying avakot.icons directory to ./release/avakot.icons"
+            mkdir -p ./release/avakot.icons
+            cp -r ./avakot.icons/* ./release/avakot.icons/ 2>/dev/null || :
+            echo "avakot.icons directory copied to the release directory."
+          else
+            echo "Warning: avakot.icons directory not found. Continuing without it."
+          fi
+
+          echo "Release directory validated and prepared as ./release."
+        shell: bash
+
+      - name: Upload Lua files to S3 # Renamed step
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
+          AWS_S3_ENDPOINT_URL: https://s3.7thseraph.org
+          MINIO_S3_BUCKET: wiki.avakot.org
+          TARGET_DIR: oreo.temp
+          # RELEASE_TAG is removed as it's not used in the updated S3 path or command
+        run: |
+          set -e
+          SOURCE_PATH="." # Source is the root of the repository
+          # S3_TARGET_PATH uploads to the root of the TARGET_DIR
+          S3_TARGET_PATH="s3://${MINIO_S3_BUCKET}/${TARGET_DIR}/"
+
+          echo "Uploading .lua files from ${SOURCE_PATH} to ${S3_TARGET_PATH}"
+
+          # Recursively copy only .lua files from the source path to S3
+          # Exclude all files first, then include .lua files.
+          # Add specific directory/file exclusions as needed.
+          aws s3 cp "${SOURCE_PATH}" "${S3_TARGET_PATH}" \
+            --recursive \
+            --exclude "*" \
+            --include "*.lua" \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --endpoint-url ${AWS_S3_ENDPOINT_URL}
+
+          echo "Lua files upload complete."
+        shell: bash
