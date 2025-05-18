@@ -12,22 +12,13 @@ local branches = {}
 
 -- ASCII Art for TVA Logo
 local tvaLogo = {
-    "TTTTTTTTTTTTTTTTTTTTTTTVVVVVVVV           VVVVVVVV   AAA               ",
-    "T:::::::::::::::::::::TV::::::V           V::::::V  A:::A              ",
-    "T:::::::::::::::::::::TV::::::V           V::::::V A:::::A             ",
-    "T:::::TT:::::::TT:::::TV::::::V           V::::::VA:::::::A            ",
-    "TTTTTT  T:::::T  TTTTTT V:::::V           V:::::VA:::::::::A           ",
-    "        T:::::T          V:::::V         V:::::VA:::::A:::::A          ",
-    "        T:::::T           V:::::V       V:::::VA:::::A A:::::A         ",
-    "        T:::::T            V:::::V     V:::::VA:::::A   A:::::A        ",
-    "        T:::::T             V:::::V   V:::::VA:::::A     A:::::A       ",
-    "        T:::::T              V:::::V V:::::VA:::::AAAAAAAAA:::::A      ",
-    "        T:::::T               V:::::V:::::VA:::::::::::::::::::::A     ",
-    "        T:::::T                V:::::::::VA:::::AAAAAAAAAAAAA:::::A    ",
-    "      TT:::::::TT               V:::::::VA:::::A             A:::::A   ",
-    "      T:::::::::T                V:::::VA:::::A               A:::::A  ",
-    "      T:::::::::T                 V:::VA:::::A                 A:::::A ",
-    "      TTTTTTTTTTT                  VVVAAAAAAA                   AAAAAAA"
+    "░▒▓████████▓▒░░▒▓█▓▒░░▒▓█▓▒░ ░▒▓██████▓▒░  ",
+    "   ░▒▓█▓▒░    ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░ ",
+    "   ░▒▓█▓▒░     ░▒▓█▓▒▒▓█▓▒░ ░▒▓█▓▒░░▒▓█▓▒░ ",
+    "   ░▒▓█▓▒░     ░▒▓█▓▒▒▓█▓▒░ ░▒▓████████▓▒░ ",
+    "   ░▒▓█▓▒░      ░▒▓█▓▓█▓▒░  ░▒▓█▓▒░░▒▓█▓▒░ ",
+    "   ░▒▓█▓▒░      ░▒▓█▓▓█▓▒░  ░▒▓█▓▒░░▒▓█▓▒░ ",
+    "   ░▒▓█▓▒░       ░▒▓██▓▒░   ░▒▓█▓▒░░▒▓█▓▒░ "
 }
 local logoHeight = #tvaLogo
 local logoWidth = 0
@@ -223,11 +214,13 @@ while true do
         if not mainLineIsStationary then
             clockCurrentY = clockCurrentY - 1
         end
-        if clockCurrentY <= clockTargetY or mainLineIsStationary then -- Corrected target Y for clock
-            clockCurrentY = math.max(1, height - clockAsciiHeight + 1 -1) -- Ensure it's on screen, -1 for padding
-            clockTargetY = clockCurrentY -- Lock in the final Y
+        -- Transition to shuffling only when both main line is stationary AND clock has reached its target Y
+        if mainLineIsStationary and clockCurrentY <= clockTargetY then
+            clockCurrentY = clockTargetY -- Ensure it's exactly at the target
             clockState = "shuffling"
             clockShuffleEndTime = os.time() + clockShuffleDuration
+        elseif clockCurrentY <= clockTargetY then -- If clock reaches target before main line, hold position
+             clockCurrentY = clockTargetY
         end
     elseif clockState == "shuffling" then
         if os.time() >= clockShuffleEndTime then
