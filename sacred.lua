@@ -12,21 +12,21 @@ local branches = {}
 
 -- ASCII Art for TVA Logo
 local tvaLogo = {
-    "░▒▓████████▓▒░░▒▓█▓▒░░▒▓█▓▒░ ░▒▓██████▓▒░  ",
-    "   ░▒▓█▓▒░    ░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒░ ",
-    "   ░▒▓█▓▒░     ░▒▓█▓▒▒▓█▓▒░ ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "   ░▒▓█▓▒░     ░▒▓█▓▒▒▓█▓▒░ ░▒▓████████▓▒░ ",
-    "   ░▒▓█▓▒░      ░▒▓█▓▓█▓▒░  ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "   ░▒▓█▓▒░      ░▒▓█▓▓█▓▒░  ░▒▓█▓▒░░▒▓█▓▒░ ",
-    "   ░▒▓█▓▒░       ░▒▓██▓▒░   ░▒▓█▓▒░░▒▓█▓▒░ "
+    " _________  __   __   ________      ",
+    "/________/\\/_/\\ /_/\\ /_______/\\     ",
+    "\\__.::.__\\/\\:\\ \\\\ \\ \\\\::: _  \\ \\    ",
+    "   \\::\\ \\   \\:\\ \\\\ \\ \\\\::(_)  \\ \\   ",
+    "    \\::\\ \\   \\:\\_/.:\\ \\\\:: __  \\ \\  ",
+    "     \\::\\ \\   \\ ..::/ / \\:.\\ \\  \\ \\ ",
+    "      \\__\\/    \\___/_(   \\__\\/\\__\\/ "
 }
 local logoHeight = #tvaLogo
 local logoWidth = 0
-if logoHeight > 0 then logoWidth = string.len(tvaLogo[1]) end -- Use string.len for safety
+if logoHeight > 0 then logoWidth = string.len(tvaLogo[1]) end
 
 local logoCurrentY = 1 - logoHeight -- Start off-screen top
-local logoTargetY = 2 -- Target Y for the top line of the logo (1-indexed)
-local logoStartX = math.floor((width - logoWidth) / 2) + 1
+local logoTargetY = 2               -- Target Y for the top line of the logo
+local logoStartX = width - logoWidth + 1 -- Align to top-right
 local logoIsStationary = false
 
 -- ASCII Art for Clock Digits (5x5 example)
@@ -44,15 +44,30 @@ local asciiChars = {
     [':'] = {"     ", "  #  ", "     ", "  #  ", "     "}
 }
 local clockAsciiHeight = 5
-local clockDigitWidth = 5 -- Assumes fixed width for each char's ASCII art lines
+local clockDigitWidth = 5
 
-local clockState = "sliding" -- "sliding", "shuffling", "stable"
-local clockCurrentY = height + 1 -- Start off-screen bottom
-local clockTargetY = height - clockAsciiHeight -- Top Y of clock text (0-indexed for drawing loop, so height-ch+1 for 1-indexed cursor)
-                                             -- Corrected: target Y for the top line of the clock characters
-local clockShuffleEndTime = 0
-local clockShuffleDuration = 1 -- seconds
-local clockDisplayString = "" -- Stores the HH:MM string to be drawn
+local clockState = "sliding" -- "sliding", "stable" (removed "shuffling")
+local clockCurrentY = 1 - clockAsciiHeight -- Start off-screen top
+local clockTargetY = 2                     -- Target Y for the top line of the clock (top-left)
+-- Removed clockShuffleEndTime, clockShuffleDuration
+local clockDisplayString = ""
+
+-- Boot-up sequence variables
+local bootUpMessages = {
+    "Activate primary and backup power.", "Run system diagnostics.", "Synchronize temporal sensors.",
+    "Enable biometric and anomaly detection.", "Set target temporal coordinates.", "Engage interlocks and shutdown protocols.",
+    "Activate communication systems.", "Set life support and conditions.", "Activate temporal shielding.",
+    "Load and verify timeline path.", "Confirm personnel and brief mission.", "Cross-verify with command.",
+    "Initiate Time Door sequence.", "Confirm gateway stability.", "Proceed with mission clearance.",
+    "Adjust systems as needed.", "Review emergency procedures.", "Prepare for deactivation.",
+    "Shutdown Time Door safely.", "Report mission status to TVA."
+}
+local currentBootMessageText = ""
+local bootMessageDisplayStartTime = 0
+local bootMessageDuration = 0.6 -- seconds per message
+local nextBootMessageIndex = 1
+local allBootMessagesDisplayed = false
+
 
 -- Function to draw the main line
 local function drawMainLine()
@@ -152,21 +167,11 @@ end
 
 -- Function to draw the Clock
 local function drawClock()
-    local timeStr
-    if clockState == "shuffling" then
-        local h1, h2, m1, m2
-        h1 = math.random(0,2)
-        if h1 == 2 then h2 = math.random(0,3) else h2 = math.random(0,9) end
-        m1 = math.random(0,5)
-        m2 = math.random(0,9)
-        timeStr = string.format("%d%d:%d%d", h1, h2, m1, m2)
-    else
-        timeStr = textutils.formatTime(os.time(), false) -- HH:MM
-    end
+    local timeStr = textutils.formatTime(os.time(), false) -- HH:MM (no shuffling)
     clockDisplayString = timeStr
 
     local totalClockWidth = (string.len(clockDisplayString) * clockDigitWidth)
-    local currentClockStartX = math.floor((width - totalClockWidth) / 2) + 1
+    local currentClockStartX = 1 -- Align to top-left
 
     for charIdx = 1, string.len(clockDisplayString) do
         local char = string.sub(clockDisplayString, charIdx, charIdx)
@@ -180,6 +185,18 @@ local function drawClock()
                     monitor.write(asciiArtForChar[lineIdx])
                 end
             end
+        end
+    end
+end
+
+-- Function to draw boot message
+local function drawBootMessage()
+    if not mainLineIsStationary and currentBootMessageText ~= "" and string.len(currentBootMessageText) > 0 then
+        local msgX = math.floor((width - string.len(currentBootMessageText)) / 2) + 1
+        local msgY = math.floor(height / 2) -- Centered vertically
+        if msgX > 0 and msgY > 0 and msgY <= height then
+             monitor.setCursorPos(msgX, msgY)
+             monitor.write(currentBootMessageText)
         end
     end
 end
@@ -199,43 +216,56 @@ while true do
     end
 
     -- Update TVA Logo position
-    if not logoIsStationary then
-        if not mainLineIsStationary then
-            logoCurrentY = logoCurrentY + 1
-        end
-        if logoCurrentY >= logoTargetY or mainLineIsStationary then
-            logoCurrentY = logoTargetY
-            logoIsStationary = true
+    if mainLineIsStationary then
+        logoCurrentY = logoTargetY
+        logoIsStationary = true
+    elseif not logoIsStationary then -- Only try to slide if not yet stationary
+        logoCurrentY = logoCurrentY + 1 -- Moving down
+        if logoCurrentY >= logoTargetY then
+            logoCurrentY = logoTargetY -- Don't overshoot
         end
     end
 
     -- Update Clock position and state
-    if clockState == "sliding" then
-        if not mainLineIsStationary then
-            clockCurrentY = clockCurrentY - 1
-        end
-        -- Transition to shuffling only when both main line is stationary AND clock has reached its target Y
-        if mainLineIsStationary and clockCurrentY <= clockTargetY then
-            clockCurrentY = clockTargetY -- Ensure it's exactly at the target
-            clockState = "shuffling"
-            clockShuffleEndTime = os.time() + clockShuffleDuration
-        elseif clockCurrentY <= clockTargetY then -- If clock reaches target before main line, hold position
-             clockCurrentY = clockTargetY
-        end
-    elseif clockState == "shuffling" then
-        if os.time() >= clockShuffleEndTime then
-            clockState = "stable"
+    if mainLineIsStationary then
+        clockCurrentY = clockTargetY
+        clockState = "stable"
+    elseif clockState == "sliding" then -- Only try to slide if not yet stationary
+        clockCurrentY = clockCurrentY + 1 -- Moving down
+        if clockCurrentY >= clockTargetY then
+            clockCurrentY = clockTargetY -- Don't overshoot
         end
     end
     
+    -- Update Boot-up Message
+    if not mainLineIsStationary then
+        if not allBootMessagesDisplayed then
+            if os.time() >= bootMessageDisplayStartTime + bootMessageDuration then
+                if nextBootMessageIndex <= #bootUpMessages then
+                    currentBootMessageText = bootUpMessages[nextBootMessageIndex]
+                    bootMessageDisplayStartTime = os.time()
+                    nextBootMessageIndex = nextBootMessageIndex + 1
+                else
+                    currentBootMessageText = "" -- Clear last message
+                    allBootMessagesDisplayed = true
+                end
+            end
+        else
+            currentBootMessageText = "" -- Ensure it's clear after all displayed
+        end
+    elseif currentBootMessageText ~= "" then -- Clear boot message once main line is stationary
+        currentBootMessageText = ""
+    end
+
     -- Draw elements
     drawTVALogo()
+    drawClock()
+    drawBootMessage() -- Drawn after logo/clock so it can overlay if needed, though unlikely with positioning
     drawMainLine()
     updateBranches() -- This also draws branches
-    drawClock()
 
-    -- Randomly spawn branching lines
-    if math.random(1, 10) == 1 then
+    -- Randomly spawn branching lines only after main line is stationary
+    if mainLineIsStationary and math.random(1, 10) == 1 then
         local initialLength = math.random(2, 5)
         local maxLength = initialLength + math.random(3, 7)
         local direction = math.random(0, 1) == 1 and 1 or -1
