@@ -110,7 +110,10 @@ local configChanged = false
 
 print("Processing configurations from " .. DEFAULTS_SOURCE_DIR .. "/ ...")
 if not fs.isDir(DEFAULTS_SOURCE_DIR) then
-    print("Warning: Defaults source directory '" .. DEFAULTS_SOURCE_DIR .. "/' not found. No new defaults will be added.")
+    print("Warning: Defaults source directory '" .. DEFAULTS_SOURCE_DIR .. "/' not found.")
+    print("Creating it now...")
+    fs.makeDir(DEFAULTS_SOURCE_DIR)
+    print("No configuration files exist yet. Use 'cookie config <scriptname>' to fetch them.")
 else
     -- Step 1: Process global.conf first
     local globalConfFilePath = DEFAULTS_SOURCE_DIR .. "/" .. GLOBAL_CONF_FILENAME

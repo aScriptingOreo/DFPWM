@@ -118,10 +118,12 @@ local function commandConfig(scriptName)
     -- Ensure config directories exist
     if not fs.isDir(CONFIG_DIR) then
         fs.makeDir(CONFIG_DIR)
+        print("Created directory: " .. CONFIG_DIR)
     end
     
     if not fs.isDir(CONFIG_CONF_DIR) then
         fs.makeDir(CONFIG_CONF_DIR)
+        print("Created directory: " .. CONFIG_CONF_DIR)
     end
     
     -- First, fetch the script itself
@@ -133,8 +135,17 @@ local function commandConfig(scriptName)
     
     -- Second, fetch the conf file for this script
     print("Step 2: Fetching the configuration file...")
+    -- Make sure we're saving to /cookieSuite/conf/scriptname.conf
     local confPath = CONFIG_CONF_DIR .. "/" .. scriptName .. ".conf"
+    
+    -- Try to fetch from both potential locations: directly in S3 root or in conf/ subdirectory
     local configSuccess = downloadFile(scriptName, ".conf", confPath)
+    if not configSuccess then
+        -- Try alternative location: S3/conf/script.conf
+        print("Trying alternative location for conf file...")
+        configSuccess = downloadFile("conf/" .. scriptName, ".conf", confPath)
+    end
+    
     if not configSuccess then
         print("Warning: Failed to fetch configuration file. Configuration may not be complete.")
     end
@@ -143,7 +154,14 @@ local function commandConfig(scriptName)
     local globalConfPath = CONFIG_CONF_DIR .. "/global.conf"
     if not fs.exists(globalConfPath) then
         print("Step 3: Fetching global configuration...")
-        downloadFile("global", ".conf", globalConfPath)
+        -- Try both potential locations for global.conf
+        local globalSuccess = downloadFile("global", ".conf", globalConfPath)
+        if not globalSuccess then
+            globalSuccess = downloadFile("conf/global", ".conf", globalConfPath)
+        end
+        if not globalSuccess then
+            print("Warning: Failed to fetch global configuration.")
+        end
     end
     
     -- Finally, run confgenerator to regenerate the main config file
