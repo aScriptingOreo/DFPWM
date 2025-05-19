@@ -1,75 +1,62 @@
-local monitor = peripheral.wrap("left") -- Default, will be overridden by config if available
+-- worm.lua
+-- Relies on /cookieSuite/conf.lua for its settings.
 
--- Load Configuration
 local CONFIG_FILE_PATH = "/cookieSuite/conf.lua"
+local CFG = {} -- Will hold effective configuration
 
--- Internal defaults, to be used if not found in config files
-local internalDefaults = {
-    monitorSide = "left",
-    initialSpeed = 0.1,
-    startLength = 1,
-    foodChar = "\042", -- Asterisk '*'
-    wormChars = {
-        HORIZONTAL = "\196", VERTICAL = "\179",
-        TOP_LEFT = "\218", TOP_RIGHT = "\191",
-        BOTTOM_LEFT = "\192", BOTTOM_RIGHT = "\217",
-        DOT = "\140"
-    }
-    -- Add any other settings that worm.lua uses and their defaults
-}
-
-local effectiveConfig = {}
-local loadedMainConfig = nil
-
-if fs.exists(CONFIG_FILE_PATH) then
+local function loadConfiguration()
+    if not fs.exists(CONFIG_FILE_PATH) then
+        print("CRITICAL: Main config file not found: " .. CONFIG_FILE_PATH)
+        return false
+    end
     local func, loadErr = loadfile(CONFIG_FILE_PATH)
-    if func then
-        local success, resultTable = pcall(func)
-        if success and type(resultTable) == "table" then
-            loadedMainConfig = resultTable
-            print("Loaded main configuration from " .. CONFIG_FILE_PATH)
-        elseif not success then
-            print("Error executing config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(resultTable)) -- resultTable is error
-        else
-            print("Config file did not return a table: " .. CONFIG_FILE_PATH)
-        end
-    elseif loadErr then
-        print("Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. loadErr)
+    if not func then
+        print("CRITICAL: Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(loadErr))
+        return false
     end
-else
-    print("Main config file not found: " .. CONFIG_FILE_PATH .. ". Using internal defaults only.")
-end
-
--- 1. Start with internal defaults
-for key, value in pairs(internalDefaults) do
-    effectiveConfig[key] = value
-end
-
--- 2. Override with global settings from conf.lua, if loadedMainConfig and its global section exist
-if loadedMainConfig and loadedMainConfig.global and type(loadedMainConfig.global) == "table" then
-    print("Applying global settings...")
-    for key, value in pairs(loadedMainConfig.global) do
-        effectiveConfig[key] = value -- Global overrides internal
+    local success, resultTable = pcall(func)
+    if not success or type(resultTable) ~= "table" then
+        print("CRITICAL: Error executing or parsing config file: " .. CONFIG_FILE_PATH)
+        if not success then print("  Reason: " .. tostring(resultTable)) end
+        return false
     end
-end
+    print("Loaded main configuration from " .. CONFIG_FILE_PATH)
 
--- 3. Override with script-specific (worm) settings from conf.lua, if loadedMainConfig and its worm section exist
-if loadedMainConfig and loadedMainConfig.worm and type(loadedMainConfig.worm) == "table" then
-    print("Applying worm-specific settings...")
-    for key, value in pairs(loadedMainConfig.worm) do
-        effectiveConfig[key] = value -- Script-specific overrides global and internal
+    if resultTable.global and type(resultTable.global) == "table" then
+        for k, v in pairs(resultTable.global) do CFG[k] = v end
     end
+    if resultTable.worm and type(resultTable.worm) == "table" then
+        for k, v in pairs(resultTable.worm) do CFG[k] = v end
+    else
+        print("Warning: 'worm' section not found in " .. CONFIG_FILE_PATH .. ". Critical settings might be missing.")
+    end
+    return true
 end
 
--- Now, effectiveConfig contains the final settings.
--- Define script "constants" and variables from effectiveConfig.
+if not loadConfiguration() then
+    -- Provide absolutely essential defaults or error out
+    CFG.monitorSide = CFG.monitorSide or "left"
+    CFG.initialSpeed = CFG.initialSpeed or 0.1
+    CFG.startLength = CFG.startLength or 1
+    CFG.foodChar = CFG.foodChar or "*"
+    CFG.wormChars = CFG.wormChars or {
+        HORIZONTAL = "-", VERTICAL = "|", TOP_LEFT = "+", TOP_RIGHT = "+",
+        BOTTOM_LEFT = "+", BOTTOM_RIGHT = "+", DOT = "#"
+    }
+    print("Attempting to run with minimal defaults due to configuration load failure.")
+end
 
-local monitorSide = effectiveConfig.monitorSide
-local INITIAL_SPEED = effectiveConfig.initialSpeed
-local START_LENGTH = effectiveConfig.startLength
-local FOOD_CHAR = effectiveConfig.foodChar
-local WORM_CHARS = effectiveConfig.wormChars
-local EMPTY_CHAR = " " -- This could also be in internalDefaults if desired
+-- Define script "constants" and variables from CFG.
+local monitorSide = CFG.monitorSide
+local INITIAL_SPEED = CFG.initialSpeed
+local START_LENGTH = CFG.startLength
+local FOOD_CHAR = CFG.foodChar
+local WORM_CHARS = CFG.wormChars
+local EMPTY_CHAR = " "
+
+if not monitorSide or not INITIAL_SPEED or not START_LENGTH or not FOOD_CHAR or not WORM_CHARS then
+    error("Essential worm configuration missing. Please check /cookieSuite/conf.lua")
+end
 
 local monitor = peripheral.wrap(monitorSide) -- Default, will be overridden by config if available
 if not monitor then

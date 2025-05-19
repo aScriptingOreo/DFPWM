@@ -1,58 +1,48 @@
 -- tpsmon.lua
 -- Reads redstone signal from a specified side and displays it on a monitor.
+-- Relies on /cookieSuite/conf.lua for its settings.
 
--- Load Configuration
 local CONFIG_FILE_PATH = "/cookieSuite/conf.lua"
+local CFG = {} -- Will hold effective configuration
 
--- Internal defaults, to be used if not found in config files
-local internalDefaults = {
-    monitorSide = "top",
-    redstoneSourceSide = "bottom",
-    updateInterval = 1,
-    title = "Redstone Signal Monitor"
-}
+local function loadConfiguration()
+    if not fs.exists(CONFIG_FILE_PATH) then
+        print("CRITICAL: Main config file not found: " .. CONFIG_FILE_PATH)
+        return false
+    end
 
-local CFG = {}
-local loadedMainConfig = nil
-
-if fs.exists(CONFIG_FILE_PATH) then
     local func, loadErr = loadfile(CONFIG_FILE_PATH)
-    if func then
-        local success, resultTable = pcall(func)
-        if success and type(resultTable) == "table" then
-            loadedMainConfig = resultTable
-            print("Loaded main configuration from " .. CONFIG_FILE_PATH)
-        elseif not success then
-            print("Error executing config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(resultTable))
-        else
-            print("Config file did not return a table: " .. CONFIG_FILE_PATH)
-        end
-    elseif loadErr then
-        print("Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. loadErr)
+    if not func then
+        print("CRITICAL: Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(loadErr))
+        return false
     end
-else
-    print("Main config file not found: " .. CONFIG_FILE_PATH .. ". Using internal defaults only.")
+
+    local success, resultTable = pcall(func)
+    if not success or type(resultTable) ~= "table" then
+        print("CRITICAL: Error executing or parsing config file: " .. CONFIG_FILE_PATH)
+        if not success then print("  Reason: " .. tostring(resultTable)) end
+        return false
+    end
+    print("Loaded main configuration from " .. CONFIG_FILE_PATH)
+
+    if resultTable.global and type(resultTable.global) == "table" then
+        for k, v in pairs(resultTable.global) do CFG[k] = v end
+    end
+    if resultTable.tpsmon and type(resultTable.tpsmon) == "table" then
+        for k, v in pairs(resultTable.tpsmon) do CFG[k] = v end
+    else
+        print("Warning: 'tpsmon' section not found in " .. CONFIG_FILE_PATH .. ". Critical settings might be missing.")
+    end
+    return true
 end
 
--- 1. Start with internal defaults
-for key, value in pairs(internalDefaults) do
-    CFG[key] = value
-end
-
--- 2. Override with global settings from conf.lua
-if loadedMainConfig and loadedMainConfig.global and type(loadedMainConfig.global) == "table" then
-    print("Applying global settings...")
-    for key, value in pairs(loadedMainConfig.global) do
-        CFG[key] = value
-    end
-end
-
--- 3. Override with script-specific (tpsmon) settings from conf.lua
-if loadedMainConfig and loadedMainConfig.tpsmon and type(loadedMainConfig.tpsmon) == "table" then
-    print("Applying tpsmon-specific settings...")
-    for key, value in pairs(loadedMainConfig.tpsmon) do
-        CFG[key] = value
-    end
+if not loadConfiguration() then
+    -- Provide absolutely essential defaults or error out
+    CFG.monitorSide = CFG.monitorSide or "top" -- Critical default
+    CFG.redstoneSourceSide = CFG.redstoneSourceSide or "bottom" -- Critical default
+    CFG.updateInterval = CFG.updateInterval or 1
+    CFG.title = CFG.title or "TPS Monitor (Config Error)"
+    print("Attempting to run with minimal defaults due to configuration load failure.")
 end
 
 -- Use CFG for script operation
@@ -60,6 +50,10 @@ local MONITOR_SIDE = CFG.monitorSide
 local REDSTONE_SOURCE_SIDE = CFG.redstoneSourceSide
 local UPDATE_INTERVAL = CFG.updateInterval
 local MONITOR_TITLE = CFG.title
+
+if not MONITOR_SIDE or not REDSTONE_SOURCE_SIDE or not UPDATE_INTERVAL or not MONITOR_TITLE then
+    error("Essential tpsmon configuration missing. Please check /cookieSuite/conf.lua")
+end
 
 -- Attempt to wrap peripherals
 local mon = peripheral.wrap(MONITOR_SIDE)
