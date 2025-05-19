@@ -1,27 +1,91 @@
-local monitor = peripheral.wrap("left")
+local monitor = peripheral.wrap("left") -- Default, will be overridden by config if available
+
+-- Load Configuration
+local CONFIG_FILE_PATH = "/cookieSuite/conf.lua"
+
+-- Internal defaults, to be used if not found in config files
+local internalDefaults = {
+    monitorSide = "left",
+    initialSpeed = 0.1,
+    startLength = 1,
+    foodChar = "\042", -- Asterisk '*'
+    wormChars = {
+        HORIZONTAL = "\196", VERTICAL = "\179",
+        TOP_LEFT = "\218", TOP_RIGHT = "\191",
+        BOTTOM_LEFT = "\192", BOTTOM_RIGHT = "\217",
+        DOT = "\140"
+    }
+    -- Add any other settings that worm.lua uses and their defaults
+}
+
+local effectiveConfig = {}
+local loadedMainConfig = nil
+
+if fs.exists(CONFIG_FILE_PATH) then
+    local func, loadErr = loadfile(CONFIG_FILE_PATH)
+    if func then
+        local success, resultTable = pcall(func)
+        if success and type(resultTable) == "table" then
+            loadedMainConfig = resultTable
+            print("Loaded main configuration from " .. CONFIG_FILE_PATH)
+        elseif not success then
+            print("Error executing config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(resultTable)) -- resultTable is error
+        else
+            print("Config file did not return a table: " .. CONFIG_FILE_PATH)
+        end
+    elseif loadErr then
+        print("Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. loadErr)
+    end
+else
+    print("Main config file not found: " .. CONFIG_FILE_PATH .. ". Using internal defaults only.")
+end
+
+-- 1. Start with internal defaults
+for key, value in pairs(internalDefaults) do
+    effectiveConfig[key] = value
+end
+
+-- 2. Override with global settings from conf.lua, if loadedMainConfig and its global section exist
+if loadedMainConfig and loadedMainConfig.global and type(loadedMainConfig.global) == "table" then
+    print("Applying global settings...")
+    for key, value in pairs(loadedMainConfig.global) do
+        effectiveConfig[key] = value -- Global overrides internal
+    end
+end
+
+-- 3. Override with script-specific (worm) settings from conf.lua, if loadedMainConfig and its worm section exist
+if loadedMainConfig and loadedMainConfig.worm and type(loadedMainConfig.worm) == "table" then
+    print("Applying worm-specific settings...")
+    for key, value in pairs(loadedMainConfig.worm) do
+        effectiveConfig[key] = value -- Script-specific overrides global and internal
+    end
+end
+
+-- Now, effectiveConfig contains the final settings.
+-- Define script "constants" and variables from effectiveConfig.
+
+local monitorSide = effectiveConfig.monitorSide
+local INITIAL_SPEED = effectiveConfig.initialSpeed
+local START_LENGTH = effectiveConfig.startLength
+local FOOD_CHAR = effectiveConfig.foodChar
+local WORM_CHARS = effectiveConfig.wormChars
+local EMPTY_CHAR = " " -- This could also be in internalDefaults if desired
+
+local monitor = peripheral.wrap(monitorSide) -- Default, will be overridden by config if available
 if not monitor then
-    error("Monitor not found on the left. Please attach one or change the side.")
+    error("Monitor not found on side: " .. monitorSide .. ". Please attach one or change the side.")
 end
 
 local term_target = term.redirect(monitor) -- Redirect terminal output to the monitor
 
 local W, H = monitor.getSize()
 
--- Game Configuration
-local WORM_CHARS = {
-    HORIZONTAL = "\196", -- ─
-    VERTICAL = "\179",   -- │
-    TOP_LEFT = "\218",   -- ┌
-    TOP_RIGHT = "\191",  -- ┐
-    BOTTOM_LEFT = "\192",-- └
-    BOTTOM_RIGHT = "\217",-- ┘
-    -- Fallback for single segment or if direction is ambiguous (should not happen with dx,dy)
-    DOT = "\140"         -- █ 
-}
-local FOOD_CHAR = "\042" -- Asterisk '*'
-local EMPTY_CHAR = " "
-local INITIAL_SPEED = 0.1 -- Seconds per frame
-local START_LENGTH = 1
+-- Game Configuration using effectiveConfig
+-- local WORM_CHARS = effectiveConfig.wormChars
+-- local FOOD_CHAR = effectiveConfig.foodChar
+-- local EMPTY_CHAR = " "
+-- local INITIAL_SPEED = effectiveConfig.initialSpeed
+-- local START_LENGTH = effectiveConfig.startLength
 
 -- Game State
 local worm

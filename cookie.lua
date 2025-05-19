@@ -51,6 +51,15 @@ if handle then
             file.write(content)
             file.close()
             print("Successfully fetched and saved: " .. localFilename)
+
+            -- Run confgenerator after successful fetch
+            print("Running configuration generator...")
+            local confGenSuccess, confGenReason = shell.run("confgenerator")
+            if confGenSuccess then
+                print("Configuration generator ran successfully.")
+            else
+                print("Error running configuration generator: " .. tostring(confGenReason))
+            end
         else
             print("Error: Failed to open local file for writing: " .. localFilename)
             if writeErr then
