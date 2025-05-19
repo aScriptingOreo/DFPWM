@@ -4,15 +4,20 @@ local function printUsage()
     print("Usage:")
     print("  cookie fetch <filename>   - Fetch a script from the repository")
     print("  cookie config <filename>  - Fetch and configure a script")
+    print("  cookie log [filename]     - Upload logs to Pastebin")
     print("")
-    print("  <filename>: Name without .lua extension")
+    print("  <filename>: Name without .lua extension for fetch/config")
+    print("              With optional path for specific log file")
     print("  Examples: cookie fetch worm")
     print("           cookie config tpsmon")
+    print("           cookie log       (uploads all logs)")
+    print("           cookie log /cookieSuite/confgen_debug.log")
 end
 
 -- Configuration paths
 local CONFIG_DIR = "/cookieSuite"
 local CONFIG_CONF_DIR = CONFIG_DIR .. "/conf"
+local CONFIG_LOG_DIR = CONFIG_DIR .. "/log"
 local baseURL = "https://s3.7thseraph.org/wiki.avakot.org/oreo.temp/"
 
 -- Function to download a file from the repository
@@ -115,16 +120,7 @@ local function commandConfig(scriptName)
         return
     end
     
-    -- Ensure config directories exist
-    if not fs.isDir(CONFIG_DIR) then
-        fs.makeDir(CONFIG_DIR)
-        print("Created directory: " .. CONFIG_DIR)
-    end
-    
-    if not fs.isDir(CONFIG_CONF_DIR) then
-        fs.makeDir(CONFIG_CONF_DIR)
-        print("Created directory: " .. CONFIG_CONF_DIR)
-    end
+    -- Remove directory creation logic - confgenerator will handle this
     
     -- First, fetch the script itself
     print("Step 1: Fetching the script...")
@@ -135,7 +131,7 @@ local function commandConfig(scriptName)
     
     -- Second, fetch the conf file for this script
     print("Step 2: Fetching the configuration file...")
-    -- Make sure we're saving to /cookieSuite/conf/scriptname.conf
+    -- Let confgenerator determine the exact path
     local confPath = CONFIG_CONF_DIR .. "/" .. scriptName .. ".conf"
     
     -- Try to fetch from both potential locations: directly in S3 root or in conf/ subdirectory
@@ -166,9 +162,158 @@ local function commandConfig(scriptName)
     
     -- Finally, run confgenerator to regenerate the main config file
     print("Step 4: Regenerating configuration...")
-    runConfGenerator()
+    -- Run confgenerator with more detailed output
+    local confGenSuccess = runConfGenerator() 
+    
+    -- Check for the debug log file after running confgenerator
+    local debugLogPath = CONFIG_DIR .. "/confgen_debug.log"
+    if fs.exists(debugLogPath) then
+        print("Configuration generator debug log:")
+        print("--------------------------------")
+        local debugFile = fs.open(debugLogPath, "r")
+        if debugFile then
+            local line = debugFile.readLine()
+            while line do
+                print(line)
+                line = debugFile.readLine()
+            end
+            debugFile.close()
+        end
+        print("--------------------------------")
+    end
+    
+    -- Check if main config file exists after running confgenerator
+    local mainConfigPath = CONFIG_DIR .. "/conf.lua"
+    if fs.exists(mainConfigPath) then
+        print("Main configuration file was successfully created or updated.")
+    else
+        print("ERROR: Main configuration file was not created!")
+    end
     
     print("Configuration process complete for: " .. scriptName)
+end
+
+-- Command: log (formerly paste)
+local function commandLog(specificFile)
+    -- Ensure log directory exists
+    if not fs.isDir(CONFIG_LOG_DIR) then
+        fs.makeDir(CONFIG_LOG_DIR)
+        print("Created log directory: " .. CONFIG_LOG_DIR)
+    end
+    
+    -- If a specific file is provided, just upload that
+    if specificFile and string.len(specificFile) > 0 then
+        if not fs.exists(specificFile) then
+            print("Error: File not found: " .. specificFile)
+            return
+        end
+        
+        -- Upload to Pastebin
+        print("Uploading " .. specificFile .. " to Pastebin...")
+        local success, pastebinId = shell.run("pastebin", "put", specificFile)
+        
+        if success then
+            print("Successfully uploaded to Pastebin!")
+            print("Pastebin ID: " .. pastebinId)
+            print("URL: https://pastebin.com/" .. pastebinId)
+        else
+            print("Error uploading to Pastebin. Please check your network connection.")
+            print("Output: " .. tostring(pastebinId))
+        end
+        return
+    end
+    
+    -- If no specific file, collect and combine all logs
+    print("Collecting all log files...")
+    
+    -- Create a temporary combined log file
+    local tempLogFile = CONFIG_LOG_DIR .. "/combined_logs.tmp"
+    local combinedLog = fs.open(tempLogFile, "w")
+    if not combinedLog then
+        print("Error: Could not create combined log file.")
+        return
+    end
+    
+    combinedLog.writeLine("=== CookieSuite Combined Log File ===")
+    combinedLog.writeLine("Generated: " .. os.date())
+    combinedLog.writeLine("")
+    
+    -- First check the main cookieSuite directory for log files
+    local foundLogs = false
+    local function processLogsInDir(directory, dirLabel)
+        local files = fs.list(directory)
+        local logFilesInDir = false
+        
+        for _, filename in ipairs(files) do
+            local path = fs.combine(directory, filename)
+            if not fs.isDir(path) and string.match(filename, "%.log$") then
+                logFilesInDir = true
+                foundLogs = true
+                
+                combinedLog.writeLine("=== " .. dirLabel .. ": " .. filename .. " ===")
+                combinedLog.writeLine("")
+                
+                local logFile = fs.open(path, "r")
+                if logFile then
+                    local line = logFile.readLine()
+                    while line do
+                        combinedLog.writeLine(line)
+                        line = logFile.readLine()
+                    end
+                    logFile.close()
+                else
+                    combinedLog.writeLine("ERROR: Could not read file.")
+                end
+                
+                combinedLog.writeLine("")
+                combinedLog.writeLine("")
+            end
+        end
+        
+        return logFilesInDir
+    end
+    
+    -- Process logs in main directory and log directory
+    local mainDirHasLogs = processLogsInDir(CONFIG_DIR, "CookieSuite Directory")
+    local logDirHasLogs = processLogsInDir(CONFIG_LOG_DIR, "Log Directory")
+    
+    -- Also check the current directory for logs
+    if fs.getDir("") ~= CONFIG_DIR and fs.getDir("") ~= CONFIG_LOG_DIR then
+        local currentDirHasLogs = processLogsInDir("", "Current Directory")
+        if currentDirHasLogs then
+            foundLogs = true
+        end
+    end
+    
+    combinedLog.close()
+    
+    if not foundLogs then
+        print("No log files found.")
+        fs.delete(tempLogFile)
+        return
+    end
+    
+    -- Upload the combined log file to Pastebin
+    print("Uploading combined logs to Pastebin...")
+    local success, pastebinId = shell.run("pastebin", "put", tempLogFile)
+    
+    if success then
+        print("Successfully uploaded combined logs to Pastebin!")
+        print("Pastebin ID: " .. pastebinId)
+        print("URL: https://pastebin.com/" .. pastebinId)
+        
+        -- Save a copy of the combined log with timestamp
+        local timestamp = os.date("%Y%m%d_%H%M%S")
+        local savedCopy = CONFIG_LOG_DIR .. "/combined_" .. timestamp .. ".log"
+        fs.copy(tempLogFile, savedCopy)
+        print("Saved a copy of combined logs to: " .. savedCopy)
+    else
+        print("Error uploading to Pastebin. Please check your network connection.")
+        print("Output: " .. tostring(pastebinId))
+    end
+    
+    -- Clean up the temporary file
+    fs.delete(tempLogFile)
 end
 
 -- Main command processing
@@ -183,6 +328,8 @@ if command == "fetch" and #args >= 2 then
     commandFetch(args[2])
 elseif command == "config" and #args >= 2 then
     commandConfig(args[2])
+elseif command == "log" then
+    commandLog(args[2]) -- args[2] might be nil, which is fine
 else
     printUsage()
 end
