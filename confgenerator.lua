@@ -74,34 +74,98 @@ local function downloadFile(url, targetPath)
     return content
 end
 
--- Parse JSON string (simple implementation for our needs)
+-- Parse JSON string (improved implementation)
 local function parseJSON(jsonString)
     -- Safety check
     if not jsonString or type(jsonString) ~= "string" then
+        logDebug("Invalid JSON input: " .. tostring(jsonString))
         return nil, "Invalid JSON input"
     end
+    
+    -- Log the first part of the JSON to debug
+    logDebug("JSON content sample: " .. string.sub(jsonString, 1, 200))
 
-    -- We're expecting a specific format for our available_files.json
+    -- Create result structure
     local result = {
         scripts = {},
         configs = {}
     }
     
-    -- Extract script names
-    for scriptName in jsonString:gmatch('"scripts"%s*:%s*%[([^%]]+)%]') do
-        for name in scriptName:gmatch('"([^"]+)"') do
+    -- Manual JSON parsing for our specific format
+    -- First, extract the scripts array
+    local scriptsList = jsonString:match('"scripts"%s*:%s*%[(.-)%]')
+    if scriptsList then
+        logDebug("Found scripts list: " .. scriptsList)
+        for name in scriptsList:gmatch('"([^"]+)"') do
             table.insert(result.scripts, name)
+            logDebug("Added script: " .. name)
         end
+    else
+        logDebug("Failed to find scripts list in JSON")
     end
     
-    -- Extract config names
-    for configName in jsonString:gmatch('"configs"%s*:%s*%[([^%]]+)%]') do
-        for name in configName:gmatch('"([^"]+)"') do
+    -- Then extract the configs array
+    local configsList = jsonString:match('"configs"%s*:%s*%[(.-)%]')
+    if configsList then
+        logDebug("Found configs list: " .. configsList)
+        for name in configsList:gmatch('"([^"]+)"') do
             table.insert(result.configs, name)
+            logDebug("Added config: " .. name)
+        end
+    else
+        logDebug("Failed to find configs list in JSON")
+    end
+    
+    logDebug("Parsed JSON: found " .. #result.scripts .. " scripts and " .. #result.configs .. " configs")
+    return result
+end
+
+-- Function to try multiple ways to parse config content
+local function tryParseConfig(content, tmpPath, configName)
+    -- First try: Direct loading with load()
+    local func, err = load(content)
+    if func then
+        local success, result = pcall(func)
+        if success and type(result) == "table" then
+            logDebug("Successfully parsed config using load() directly")
+            return result
+        else
+            logDebug("Failed with direct load() - Error: " .. tostring(result))
+        end
+    else
+        logDebug("Failed to load with direct load() - Error: " .. tostring(err))
+    end
+    
+    -- Second try: Check if content starts with "return "
+    if content:sub(1, 7) == "return " then
+        local configTable = content:sub(8) -- Strip "return "
+        local func, err = load("return " .. configTable)
+        if func then
+            local success, result = pcall(func)
+            if success and type(result) == "table" then
+                logDebug("Successfully parsed after stripping 'return'")
+                return result
+            end
         end
     end
     
-    return result
+    -- Third try: Inject the content into a table constructor
+    local func, err = load("return " .. content)
+    if func then
+        local success, result = pcall(func)
+        if success and type(result) == "table" then
+            logDebug("Successfully parsed using 'return " .. content:sub(1, 20) .. "...'")
+            return result
+        end
+    end
+    
+    -- Final attempt: Create a simple default
+    logDebug("All parsing attempts failed. Creating minimal default for " .. configName)
+    logDebug("Config content snippet: " .. content:sub(1, 100))
+    return {
+        _parseError = "Could not parse original config",
+        _originalContent = content:sub(1, 30) .. "..." -- Store a sample for debugging
+    }
 end
 
 -- Load Lua content as a table (used for remote config files)
@@ -232,22 +296,14 @@ local function downloadAndProcessConfig(configPath, configName)
         return nil
     end
     
-    -- First, try to parse the config content directly
-    local configTable = loadLuaStringAsTable(content, configName)
-    
-    -- If that fails, try to load it from the file
-    if not configTable then
-        logDebug("Failed to parse config content directly, trying to load from file")
-        configTable = loadLuaFileAsTable(tmpPath)
-    end
+    -- Try various ways to parse the config
+    local configTable = tryParseConfig(content, tmpPath, configName)
     
     -- Clean up temp file
     if fs.exists(tmpPath) then fs.delete(tmpPath) end
     
     if not configTable then
-        logDebug("Failed to parse config content for: " .. configName)
-        -- Log the content to help debug
-        logDebug("Config content: " .. string.sub(content, 1, 100) .. (string.len(content) > 100 and "..." or ""))
+        logDebug("All parsing methods failed for: " .. configName)
         return nil
     end
     
@@ -273,19 +329,65 @@ local availableFilesContent, err = downloadFile(AVAILABLE_FILES_URL, tmpAvailabl
 if not availableFilesContent then
     logDebug("Failed to download available files list: " .. (err or "Unknown error"))
     print("Failed to download available files list. Cannot continue without knowing what's available.")
+    
+    -- If we have existing configuration, don't lose it
+    if fs.exists(CONFIG_FILE_PATH_MAIN) then
+        logDebug("Keeping existing configuration file")
+        print("Keeping existing configuration file.")
+    end
     return 1
 end
 
 -- Parse the available files metadata
 local availableFiles, parseErr = parseJSON(availableFilesContent)
-if not availableFiles then
-    logDebug("Failed to parse available files JSON: " .. (parseErr or "Unknown error"))
+if not availableFiles or #availableFiles.scripts == 0 then
+    logDebug("Failed to parse available files JSON or no scripts found: " .. (parseErr or "Unknown error"))
     print("Failed to parse available files list. Cannot continue.")
-    return 1
+    
+    -- As a fallback, try to get files lists directly
+    logDebug("Trying fallback method to get scripts and configs lists")
+    print("Trying fallback method to get file lists...")
+    
+    local scriptsListContent = http.get(SCRIPTS_LIST_URL)
+    local configsListContent = http.get(CONFIGS_LIST_URL)
+    
+    if scriptsListContent and configsListContent then
+        availableFiles = {
+            scripts = {},
+            configs = {}
+        }
+        
+        -- Parse scripts list
+        local scriptsText = scriptsListContent.readAll()
+        scriptsListContent.close()
+        for line in scriptsText:gmatch("([^\r\n]+)") do
+            if line and line:match("%.lua$") then
+                table.insert(availableFiles.scripts, line)
+                logDebug("Added script from fallback: " .. line)
+            end
+        end
+        
+        -- Parse configs list
+        local configsText = configsListContent.readAll()
+        configsListContent.close()
+        for line in configsText:gmatch("([^\r\n]+)") do
+            if line and line:match("%.conf$") then
+                table.insert(availableFiles.configs, line)
+                logDebug("Added config from fallback: " .. line)
+            end
+        end
+        
+        if #availableFiles.scripts == 0 and #availableFiles.configs == 0 then
+            logDebug("Fallback method also failed to find scripts/configs")
+            print("Fallback method also failed. Keeping existing configuration.")
+            return 1
+        end
+    else
+        logDebug("Fallback method failed")
+        print("All methods failed. Keeping existing configuration.")
+        return 1
+    end
 end
-
--- Clean up temp file
-if fs.exists(tmpAvailableFilesPath) then fs.delete(tmpAvailableFilesPath) end
 
 -- Log what we found
 logDebug("Found " .. #availableFiles.scripts .. " scripts and " .. #availableFiles.configs .. " configuration files")
@@ -358,8 +460,23 @@ for _, scriptPath in ipairs(availableFiles.scripts) do
     end
 end
 
--- Save the configuration if changes were made
+-- Make sure we don't generate an empty config file
 if configChanged then
+    -- Check if the config is actually populated (not just empty tables)
+    local hasActualContent = false
+    for scriptName, scriptConfig in pairs(currentMainConfig) do
+        if type(scriptConfig) == "table" and next(scriptConfig) ~= nil then
+            hasActualContent = true
+            break
+        end
+    end
+    
+    if not hasActualContent then
+        logDebug("Warning: Generated config would be empty! Aborting save.")
+        print("Warning: Generated configuration would be empty. Not saving to avoid data loss.")
+        return 1
+    end
+    
     logDebug("Saving updated configuration")
     local saveSuccess = saveConfig(currentMainConfig, CONFIG_FILE_PATH_MAIN)
     if not saveSuccess then

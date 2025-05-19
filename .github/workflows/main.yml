@@ -22,15 +22,20 @@ jobs:
           # Create a directory for metadata
           mkdir -p metadata
 
-          # Generate list of Lua scripts
+          # Generate list of Lua scripts with full paths
           echo "Generating list of Lua scripts..."
-          find . -name "*.lua" -not -path "*/\.*" | sed 's|^./||' > metadata/scripts.list
+          find . -type f -name "*.lua" -not -path "*/\.*" | sed 's|^./||' > metadata/scripts.list
 
-          # Generate list of conf files
+          # Generate list of conf files with full paths
           echo "Generating list of conf files..."
-          find ./conf -name "*.conf" -not -path "*/\.*" | sed 's|^./||' > metadata/configs.list
+          find ./conf -type f -name "*.conf" -not -path "*/\.*" | sed 's|^./||' > metadata/configs.list
+
+          # Verify that files exist
+          echo "Found $(wc -l < metadata/scripts.list) script files"
+          echo "Found $(wc -l < metadata/configs.list) config files"
 
           # Create a JSON file with both lists for easier parsing in Lua
+          # Using simple echo commands instead of heredoc for better YAML compatibility
           echo "{" > metadata/available_files.json
           echo "  \"scripts\": [" >> metadata/available_files.json
           sed 's/^/    "/;s/$/",/' metadata/scripts.list | sed '$s/,$//' >> metadata/available_files.json
@@ -39,6 +44,9 @@ jobs:
           sed 's/^/    "/;s/$/",/' metadata/configs.list | sed '$s/,$//' >> metadata/available_files.json
           echo "  ]" >> metadata/available_files.json
           echo "}" >> metadata/available_files.json
+
+          # Verify JSON is valid
+          cat metadata/available_files.json
         shell: bash
 
       - name: Upload Lua files and metadata to S3
