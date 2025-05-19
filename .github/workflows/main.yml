@@ -17,7 +17,31 @@ jobs:
           unzip awscliv2.zip
           sudo ./aws/install --update
 
-      - name: Upload Lua files and conf directory to S3
+      - name: Generate script and config lists
+        run: |
+          # Create a directory for metadata
+          mkdir -p metadata
+
+          # Generate list of Lua scripts
+          echo "Generating list of Lua scripts..."
+          find . -name "*.lua" -not -path "*/\.*" | sed 's|^./||' > metadata/scripts.list
+
+          # Generate list of conf files
+          echo "Generating list of conf files..."
+          find ./conf -name "*.conf" -not -path "*/\.*" | sed 's|^./||' > metadata/configs.list
+
+          # Create a JSON file with both lists for easier parsing in Lua
+          echo "{" > metadata/available_files.json
+          echo "  \"scripts\": [" >> metadata/available_files.json
+          sed 's/^/    "/;s/$/",/' metadata/scripts.list | sed '$s/,$//' >> metadata/available_files.json
+          echo "  ]," >> metadata/available_files.json
+          echo "  \"configs\": [" >> metadata/available_files.json
+          sed 's/^/    "/;s/$/",/' metadata/configs.list | sed '$s/,$//' >> metadata/available_files.json
+          echo "  ]" >> metadata/available_files.json
+          echo "}" >> metadata/available_files.json
+        shell: bash
+
+      - name: Upload Lua files and metadata to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
@@ -29,9 +53,9 @@ jobs:
           SOURCE_PATH="." # Source is the root of the repository
           S3_TARGET_PATH="s3://${MINIO_S3_BUCKET}/${TARGET_DIR}/"
 
-          echo "Uploading .lua files and conf/ directory from ${SOURCE_PATH} to ${S3_TARGET_PATH}"
+          echo "Uploading .lua files from ${SOURCE_PATH} to ${S3_TARGET_PATH}"
 
-          # First, upload .lua files
+          # Upload .lua files
           aws s3 cp "${SOURCE_PATH}" "${S3_TARGET_PATH}" \
             --recursive \
             --exclude "*" \
@@ -40,7 +64,7 @@ jobs:
             --exclude ".github/*" \
             --endpoint-url ${AWS_S3_ENDPOINT_URL}
 
-          # Then, upload conf directory and its contents
+          # Upload conf directory and its contents
           if [ -d "${SOURCE_PATH}/conf" ]; then
             echo "Uploading conf/ directory..."
             aws s3 cp "${SOURCE_PATH}/conf" "${S3_TARGET_PATH}conf" \
@@ -49,6 +73,15 @@ jobs:
           else
             echo "conf/ directory not found. Skipping."
           fi
+
+          # Upload metadata files
+          echo "Uploading metadata files..."
+          aws s3 cp "metadata/available_files.json" "${S3_TARGET_PATH}available_files.json" \
+            --endpoint-url ${AWS_S3_ENDPOINT_URL}
+          aws s3 cp "metadata/scripts.list" "${S3_TARGET_PATH}scripts.list" \
+            --endpoint-url ${AWS_S3_ENDPOINT_URL}
+          aws s3 cp "metadata/configs.list" "${S3_TARGET_PATH}configs.list" \
+            --endpoint-url ${AWS_S3_ENDPOINT_URL}
 
           echo "Upload complete."
         shell: bash

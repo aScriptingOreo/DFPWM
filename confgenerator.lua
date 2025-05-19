@@ -1,16 +1,24 @@
 -- confgenerator.lua
--- Manages the /cookieSuite/conf.lua file by loading defaults from conf files
+-- Dynamically fetches configurations from S3 and generates the /cookieSuite/conf.lua file
 
 local CONFIG_DIR_MAIN = "/cookieSuite"
 local CONFIG_FILE_PATH_MAIN = CONFIG_DIR_MAIN .. "/conf.lua"
-local DEFAULTS_SOURCE_DIR = CONFIG_DIR_MAIN .. "/conf"
-local CONFIG_LOG_DIR = CONFIG_DIR_MAIN .. "/log" -- Added log directory
-local GLOBAL_CONF_FILENAME = "global.conf"
+local CONFIG_LOG_DIR = CONFIG_DIR_MAIN .. "/log"
+local DEBUG_LOG_FILE = CONFIG_LOG_DIR .. "/confgenerator.log"
 local GLOBAL_CONFIG_KEY = "global"
-local DEBUG_LOG_FILE = CONFIG_DIR_MAIN .. "/confgen_debug.log" -- Keep in main dir for compatibility
 
--- Initialize debug log
+-- Base URL for S3 bucket
+local BASE_URL = "https://s3.7thseraph.org/wiki.avakot.org/oreo.temp/"
+local AVAILABLE_FILES_URL = BASE_URL .. "available_files.json"
+local SCRIPTS_LIST_URL = BASE_URL .. "scripts.list"
+local CONFIGS_LIST_URL = BASE_URL .. "configs.list"
+
+-- Initialize debug log (create new file each time)
 local function logDebug(message)
+    if not fs.isDir(CONFIG_LOG_DIR) then
+        fs.makeDir(CONFIG_LOG_DIR)
+    end
+    
     local file = fs.open(DEBUG_LOG_FILE, fs.exists(DEBUG_LOG_FILE) and "a" or "w")
     if file then
         file.writeLine("[" .. os.date("%H:%M:%S") .. "] " .. message)
@@ -18,6 +26,10 @@ local function logDebug(message)
     end
 end
 
+-- Create a fresh log file at the start of execution
+if fs.exists(DEBUG_LOG_FILE) then
+    fs.delete(DEBUG_LOG_FILE)
+end
 logDebug("Starting confgenerator.lua")
 
 local function ensureConfigDir(path)
@@ -31,30 +43,103 @@ local function ensureConfigDir(path)
     end
 end
 
-local function loadLuaFileAsTable(filePath)
-    logDebug("Loading Lua file as table: " .. filePath)
-    if fs.exists(filePath) then
-        local func, err = loadfile(filePath)
-        if func then
-            local success, configTable = pcall(func)
-            if success and type(configTable) == "table" then
-                logDebug("Successfully loaded table from: " .. filePath)
-                return configTable
-            else
-                local errMsg = "Error executing Lua file: " .. filePath
-                if not success then errMsg = errMsg .. " - " .. tostring(configTable) end
-                logDebug(errMsg)
-                print(errMsg)
-            end
-        else
-            local errMsg = "Error loading Lua file: " .. filePath .. " - " .. tostring(err)
-            logDebug(errMsg)
-            print(errMsg)
-        end
-    else
-        logDebug("File not found: " .. filePath)
+-- Helper function to download a file from S3
+local function downloadFile(url, targetPath)
+    logDebug("Downloading: " .. url .. " -> " .. targetPath)
+    
+    local response, err = http.get(url)
+    if not response then
+        logDebug("Failed to download: " .. url .. " - " .. (err or "Unknown error"))
+        return nil, err
     end
-    return nil -- Return nil if not found, error, or not a table
+    
+    local content = response.readAll()
+    response.close()
+    
+    if not content or content == "" then
+        logDebug("Downloaded file was empty: " .. url)
+        return nil, "Empty content"
+    end
+    
+    local file = fs.open(targetPath, "w")
+    if not file then
+        logDebug("Failed to open file for writing: " .. targetPath)
+        return nil, "Could not open file for writing"
+    end
+    
+    file.write(content)
+    file.close()
+    
+    logDebug("Successfully downloaded: " .. url)
+    return content
+end
+
+-- Parse JSON string (simple implementation for our needs)
+local function parseJSON(jsonString)
+    -- Safety check
+    if not jsonString or type(jsonString) ~= "string" then
+        return nil, "Invalid JSON input"
+    end
+
+    -- We're expecting a specific format for our available_files.json
+    local result = {
+        scripts = {},
+        configs = {}
+    }
+    
+    -- Extract script names
+    for scriptName in jsonString:gmatch('"scripts"%s*:%s*%[([^%]]+)%]') do
+        for name in scriptName:gmatch('"([^"]+)"') do
+            table.insert(result.scripts, name)
+        end
+    end
+    
+    -- Extract config names
+    for configName in jsonString:gmatch('"configs"%s*:%s*%[([^%]]+)%]') do
+        for name in configName:gmatch('"([^"]+)"') do
+            table.insert(result.configs, name)
+        end
+    end
+    
+    return result
+end
+
+-- Load Lua content as a table (used for remote config files)
+local function loadLuaStringAsTable(luaString, sourceName)
+    logDebug("Loading Lua string as table from: " .. sourceName)
+    
+    local func, err = load("return " .. luaString, sourceName)
+    if not func then
+        logDebug("Error loading Lua string: " .. (err or "Unknown error"))
+        return nil
+    end
+    
+    local success, result = pcall(func)
+    if not success or type(result) ~= "table" then
+        logDebug("Error executing Lua string: " .. tostring(result))
+        return nil
+    end
+    
+    logDebug("Successfully loaded table from Lua string: " .. sourceName)
+    return result
+end
+
+local function loadLuaFileAsTable(filePath)
+    if fs.exists(filePath) then
+        local file = fs.open(filePath, "r")
+        if not file then 
+            logDebug("Failed to open file: " .. filePath)
+            return nil
+        end
+        
+        local content = file.readAll()
+        file.close()
+        
+        return loadLuaStringAsTable(content, filePath)
+    end
+    
+    logDebug("File not found: " .. filePath)
+    return nil
 end
 
 local function serializeValue(value)
@@ -132,118 +217,148 @@ local function saveConfig(configTable, filePath)
     end
 end
 
-local function uploadLogToPastebin()
-    if fs.exists(DEBUG_LOG_FILE) then
-        logDebug("Attempting to upload debug log to Pastebin")
-        print("Uploading debug log to Pastebin for diagnostics...")
-        
-        local success, result = shell.run("pastebin", "put", DEBUG_LOG_FILE)
-        
-        if success then
-            local msg = "Debug log uploaded to: https://pastebin.com/" .. result
-            logDebug(msg)
-            print(msg)
-            print("Please share this URL when requesting help.")
-        else
-            logDebug("Failed to upload debug log to Pastebin")
-            print("Failed to upload debug log. Please use 'cookie paste " .. DEBUG_LOG_FILE .. "' manually.")
-        end
-    else
-        print("No debug log file found.")
+-- Function to download and process a configuration from S3
+local function downloadAndProcessConfig(configPath, configName)
+    logDebug("Processing configuration for: " .. configName)
+    
+    local configUrl = BASE_URL .. configPath
+    local tmpPath = os.tmpname and os.tmpname() or "__tmp_config" .. math.random(1000, 9999)
+    
+    local content, err = downloadFile(configUrl, tmpPath)
+    if not content then
+        logDebug("Failed to download config: " .. configUrl .. " - " .. (err or "Unknown error"))
+        if fs.exists(tmpPath) then fs.delete(tmpPath) end
+        return nil
     end
+    
+    -- Parse the config content
+    local configTable = loadLuaFileAsTable(tmpPath)
+    
+    -- Clean up temp file
+    if fs.exists(tmpPath) then fs.delete(tmpPath) end
+    
+    if not configTable then
+        logDebug("Failed to parse config content for: " .. configName)
+        return nil
+    end
+    
+    logDebug("Successfully processed config for: " .. configName)
+    return configTable
 end
 
--- Main logic - always ensure all required directories
-logDebug("Ensuring all config directories exist")
-ensureConfigDir(CONFIG_DIR_MAIN) -- Ensure /cookieSuite exists
-ensureConfigDir(DEFAULTS_SOURCE_DIR) -- Ensure /cookieSuite/conf exists 
-ensureConfigDir(CONFIG_LOG_DIR) -- Ensure /cookieSuite/log exists
+-- Main logic - ensure required directories exist
+ensureConfigDir(CONFIG_DIR_MAIN)
+ensureConfigDir(CONFIG_LOG_DIR)
 
+-- Load existing configuration if available
 local currentMainConfig = loadLuaFileAsTable(CONFIG_FILE_PATH_MAIN) or {}
 local configChanged = false
 
-logDebug("Processing configurations from " .. DEFAULTS_SOURCE_DIR .. "/")
-print("Processing configurations from " .. DEFAULTS_SOURCE_DIR .. "/ ...")
+-- Download available files metadata
+logDebug("Downloading available files metadata...")
+print("Downloading available files metadata...")
 
-if not fs.isDir(DEFAULTS_SOURCE_DIR) then
-    local msg = "Warning: Defaults source directory '" .. DEFAULTS_SOURCE_DIR .. "/' not found."
-    logDebug(msg)
-    print(msg)
-    print("Creating it now...")
-    ensureConfigDir(DEFAULTS_SOURCE_DIR)
-    logDebug("No configuration files exist yet. Use 'cookie config <scriptname>' to fetch them.")
-    print("No configuration files exist yet. Use 'cookie config <scriptname>' to fetch them.")
-else
-    local files = fs.list(DEFAULTS_SOURCE_DIR)
-    logDebug("Found " .. #files .. " files in " .. DEFAULTS_SOURCE_DIR)
-    
-    -- Step 1: Process global.conf first
-    local globalConfFilePath = DEFAULTS_SOURCE_DIR .. "/" .. GLOBAL_CONF_FILENAME
-    logDebug("Checking for global config: " .. globalConfFilePath)
-    if fs.exists(globalConfFilePath) then
-        logDebug("Global config exists")
+local tmpAvailableFilesPath = os.tmpname and os.tmpname() or "__tmp_available_files"
+local availableFilesContent, err = downloadFile(AVAILABLE_FILES_URL, tmpAvailableFilesPath)
+
+if not availableFilesContent then
+    logDebug("Failed to download available files list: " .. (err or "Unknown error"))
+    print("Failed to download available files list. Cannot continue without knowing what's available.")
+    return 1
+end
+
+-- Parse the available files metadata
+local availableFiles, parseErr = parseJSON(availableFilesContent)
+if not availableFiles then
+    logDebug("Failed to parse available files JSON: " .. (parseErr or "Unknown error"))
+    print("Failed to parse available files list. Cannot continue.")
+    return 1
+end
+
+-- Clean up temp file
+if fs.exists(tmpAvailableFilesPath) then fs.delete(tmpAvailableFilesPath) end
+
+-- Log what we found
+logDebug("Found " .. #availableFiles.scripts .. " scripts and " .. #availableFiles.configs .. " configuration files")
+print("Found " .. #availableFiles.scripts .. " scripts and " .. #availableFiles.configs .. " configuration files")
+
+-- First, process global configuration if available
+local globalConfFound = false
+for _, configPath in ipairs(availableFiles.configs) do
+    if configPath:match("global%.conf$") then
+        globalConfFound = true
+        logDebug("Found global configuration file: " .. configPath)
+        print("Processing global configuration...")
+        
         if not currentMainConfig[GLOBAL_CONFIG_KEY] then
-            logDebug("Global config section doesn't exist in main config, loading from file")
-            print("Found global default config: " .. globalConfFilePath)
-            local globalDefaultConfig = loadLuaFileAsTable(globalConfFilePath)
-            if globalDefaultConfig then
-                logDebug("Successfully loaded global config data")
-                print("Adding default global config.")
-                currentMainConfig[GLOBAL_CONFIG_KEY] = globalDefaultConfig
+            local globalConfig = downloadAndProcessConfig(configPath, "global")
+            if globalConfig then
+                currentMainConfig[GLOBAL_CONFIG_KEY] = globalConfig
                 configChanged = true
-            else
-                logDebug("Failed to load global config data")
-                print("Could not load or parse default global config from: " .. globalConfFilePath)
+                logDebug("Added global configuration")
+                print("Added global configuration")
             end
         else
-            logDebug("Global config section already exists in main config")
-            print("Main config already has a '" .. GLOBAL_CONFIG_KEY .. "' section. Skipping default from " .. GLOBAL_CONF_FILENAME)
+            logDebug("Global configuration already exists in main config. Skipping.")
+            print("Global configuration already exists in main config. Skipping.")
         end
-    else
-        logDebug("Global config file not found")
-        print("Global default config file not found: " .. globalConfFilePath)
+        
+        break
     end
+end
 
-    -- Step 2: Process other script-specific .conf files
-    logDebug("Processing script-specific .conf files")
-    local defaultConfFiles = fs.list(DEFAULTS_SOURCE_DIR)
-    for _, confFilenameWithExt in ipairs(defaultConfFiles) do
-        logDebug("Examining file: " .. confFilenameWithExt)
-        if confFilenameWithExt ~= GLOBAL_CONF_FILENAME and confFilenameWithExt:sub(-5) == ".conf" then -- e.g., worm.conf
-            local scriptName = confFilenameWithExt:sub(1, -6) -- Extract "worm" from "worm.conf"
-            local scriptDefaultConfFilePath = DEFAULTS_SOURCE_DIR .. "/" .. confFilenameWithExt
-            logDebug("Processing conf file for script: " .. scriptName)
+if not globalConfFound then
+    logDebug("No global configuration file found")
+    print("No global configuration file found")
+end
 
-            if not currentMainConfig[scriptName] then
-                logDebug("Script " .. scriptName .. " not yet in main config")
-                print("Found new script default config: " .. scriptDefaultConfFilePath .. " for script '" .. scriptName .. "'")
-                local scriptDefaultConfig = loadLuaFileAsTable(scriptDefaultConfFilePath)
-                if scriptDefaultConfig then
-                    logDebug("Successfully loaded config for: " .. scriptName)
-                    print("Adding default config for: " .. scriptName)
-                    currentMainConfig[scriptName] = scriptDefaultConfig
-                    configChanged = true
+-- Process each script found in the scripts list
+for _, scriptPath in ipairs(availableFiles.scripts) do
+    local scriptName = scriptPath:match("([^/]+)%.lua$")
+    if scriptName and scriptName ~= "confgenerator" then -- Skip confgenerator itself
+        logDebug("Checking configuration for script: " .. scriptName)
+        
+        -- Look for a matching config file
+        local configFound = false
+        for _, configPath in ipairs(availableFiles.configs) do
+            if configPath:match(scriptName .. "%.conf$") then
+                configFound = true
+                logDebug("Found configuration file for " .. scriptName .. ": " .. configPath)
+                
+                if not currentMainConfig[scriptName] then
+                    print("Processing configuration for " .. scriptName .. "...")
+                    local scriptConfig = downloadAndProcessConfig(configPath, scriptName)
+                    if scriptConfig then
+                        currentMainConfig[scriptName] = scriptConfig
+                        configChanged = true
+                        logDebug("Added configuration for " .. scriptName)
+                        print("Added configuration for " .. scriptName)
+                    end
                 else
-                    logDebug("Failed to load config for: " .. scriptName)
-                    print("Could not load or parse default config from: " .. scriptDefaultConfFilePath)
+                    logDebug("Configuration for " .. scriptName .. " already exists in main config. Skipping.")
+                    print("Configuration for " .. scriptName .. " already exists in main config. Skipping.")
                 end
-            else
-                logDebug("Script " .. scriptName .. " already in main config, skipping")
-                print("Main config for '" .. scriptName .. "' already exists. Skipping default from " .. confFilenameWithExt)
+                
+                break
             end
+        end
+        
+        if not configFound then
+            logDebug("No configuration file found for " .. scriptName)
         end
     end
 end
 
+-- Save the configuration if changes were made
 if configChanged then
-    logDebug("Config changed, saving to " .. CONFIG_FILE_PATH_MAIN)
+    logDebug("Saving updated configuration")
     local saveSuccess = saveConfig(currentMainConfig, CONFIG_FILE_PATH_MAIN)
     if not saveSuccess then
         logDebug("Failed to save configuration!")
         print("CRITICAL ERROR: Failed to save configuration!")
-        uploadLogToPastebin() -- Try to upload debug log for diagnostics
-        return 1 -- Error exit code
+        return 1
     end
+    logDebug("Configuration saved successfully")
 else
     logDebug("No configuration changes needed")
     print("No configuration changes needed for main config file.")
@@ -251,8 +366,7 @@ end
 
 logDebug("Configuration generation finished successfully")
 print("Configuration generation finished successfully.")
--- Add this at the end to show the debug log path
 print("Debug log written to: " .. DEBUG_LOG_FILE)
-print("To view/share all logs, run: cookie log")
-return 0 -- Success exit code
+print("To view/share logs, run: cookie log")
+return 0
 

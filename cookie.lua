@@ -210,21 +210,12 @@ local function commandLog(specificFile)
         
         -- Upload to Pastebin
         print("Uploading " .. specificFile .. " to Pastebin...")
-        local success, pastebinId = shell.run("pastebin", "put", specificFile)
-        
-        if success then
-            print("Successfully uploaded to Pastebin!")
-            print("Pastebin ID: " .. pastebinId)
-            print("URL: https://pastebin.com/" .. pastebinId)
-        else
-            print("Error uploading to Pastebin. Please check your network connection.")
-            print("Output: " .. tostring(pastebinId))
-        end
+        shell.run("pastebin", "put", specificFile)
         return
     end
     
     -- If no specific file, collect and combine all logs
-    print("Collecting all log files...")
+    print("Collecting log files...")
     
     -- Create a temporary combined log file
     local tempLogFile = CONFIG_LOG_DIR .. "/combined_logs.tmp"
@@ -238,7 +229,7 @@ local function commandLog(specificFile)
     combinedLog.writeLine("Generated: " .. os.date())
     combinedLog.writeLine("")
     
-    -- First check the main cookieSuite directory for log files
+    -- First check the log directory for log files
     local foundLogs = false
     local function processLogsInDir(directory, dirLabel)
         local files = fs.list(directory)
@@ -273,12 +264,11 @@ local function commandLog(specificFile)
         return logFilesInDir
     end
     
-    -- Process logs in main directory and log directory
-    local mainDirHasLogs = processLogsInDir(CONFIG_DIR, "CookieSuite Directory")
+    -- Process logs in the log directory (primary location)
     local logDirHasLogs = processLogsInDir(CONFIG_LOG_DIR, "Log Directory")
     
-    -- Also check the current directory for logs
-    if fs.getDir("") ~= CONFIG_DIR and fs.getDir("") ~= CONFIG_LOG_DIR then
+    -- Also check the current directory for logs if different from log dir
+    if fs.getDir("") ~= CONFIG_LOG_DIR then
         local currentDirHasLogs = processLogsInDir("", "Current Directory")
         if currentDirHasLogs then
             foundLogs = true
@@ -295,44 +285,11 @@ local function commandLog(specificFile)
     
     -- Upload the combined log file to Pastebin
     print("Uploading combined logs to Pastebin...")
-    
-    -- Capture output from pastebin separately to avoid nil errors
-    -- We'll redirect the output to a temporary file
-    local tempOutputFile = os.tmpname and os.tmpname() or "__pastebin_output.tmp"
-    local redirectCommand = "pastebin put " .. tempLogFile .. " > " .. tempOutputFile
-    local success = shell.run(redirectCommand)
-    
-    if success then
-        -- Read the output file to get the pastebin ID
-        local outputFile = fs.open(tempOutputFile, "r")
-        local outputText = outputFile and outputFile.readAll() or ""
-        if outputFile then outputFile.close() end
-        
-        -- Clean up
-        if fs.exists(tempOutputFile) then fs.delete(tempOutputFile) end
-        
-        -- Extract pastebin ID from output text if possible
-        local pastebinId = outputText:match("pastebin%.com/(%w+)")
-        
-        if pastebinId then
-            print("Successfully uploaded combined logs to Pastebin!")
-            print("Pastebin ID: " .. pastebinId)
-        else
-            print("Successfully uploaded to Pastebin, but couldn't extract URL.")
-            print("Please check the command line for the URL.")
-        end
-        
-        -- Save a copy of the combined log with timestamp
-        local timestamp = os.date("%Y%m%d_%H%M%S")
-        local savedCopy = CONFIG_LOG_DIR .. "/combined_" .. timestamp .. ".log"
-        fs.copy(tempLogFile, savedCopy)
-        print("Saved a copy of combined logs to: " .. savedCopy)
-    else
-        print("Error uploading to Pastebin. Please check your network connection.")
-    end
+    shell.run("pastebin", "put", tempLogFile)
     
     -- Clean up the temporary file
     fs.delete(tempLogFile)
+    print("Temporary files cleaned up.")
 end
 
 -- Main command processing
