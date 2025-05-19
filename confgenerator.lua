@@ -1,9 +1,10 @@
 -- confgenerator.lua
--- Manages the /cookieSuite/conf.lua file by loading defaults from ./conf/*.conf files
+-- Manages the /cookieSuite/conf.lua file by loading defaults from conf files
 
 local CONFIG_DIR_MAIN = "/cookieSuite"
 local CONFIG_FILE_PATH_MAIN = CONFIG_DIR_MAIN .. "/conf.lua"
-local DEFAULTS_SOURCE_DIR = "conf" -- Directory to scan for individual .conf files
+-- Change this to use /cookieSuite/conf/ directory instead of local conf/
+local DEFAULTS_SOURCE_DIR = CONFIG_DIR_MAIN .. "/conf" 
 local GLOBAL_CONF_FILENAME = "global.conf"
 local GLOBAL_CONFIG_KEY = "global" -- Key used in the main conf.lua for global settings
 
@@ -102,14 +103,14 @@ end
 
 -- Main logic
 ensureConfigDir(CONFIG_DIR_MAIN) -- Ensure /cookieSuite exists
-ensureConfigDir(DEFAULTS_SOURCE_DIR) -- Ensure ./conf exists (user should create this and add .conf files)
+ensureConfigDir(DEFAULTS_SOURCE_DIR) -- Ensure /cookieSuite/conf exists 
 
 local currentMainConfig = loadLuaFileAsTable(CONFIG_FILE_PATH_MAIN) or {}
 local configChanged = false
 
-print("Processing configurations from ./" .. DEFAULTS_SOURCE_DIR .. "/ ...")
+print("Processing configurations from " .. DEFAULTS_SOURCE_DIR .. "/ ...")
 if not fs.isDir(DEFAULTS_SOURCE_DIR) then
-    print("Warning: Defaults source directory './" .. DEFAULTS_SOURCE_DIR .. "/' not found. No new defaults will be added.")
+    print("Warning: Defaults source directory '" .. DEFAULTS_SOURCE_DIR .. "/' not found. No new defaults will be added.")
 else
     -- Step 1: Process global.conf first
     local globalConfFilePath = DEFAULTS_SOURCE_DIR .. "/" .. GLOBAL_CONF_FILENAME
