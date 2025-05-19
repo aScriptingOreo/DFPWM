@@ -17,25 +17,21 @@ jobs:
           unzip awscliv2.zip
           sudo ./aws/install --update
 
-      - name: Upload Lua files to S3 # Renamed step
+      - name: Upload Lua files and conf directory to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_ACCESS_KEY }}
           AWS_S3_ENDPOINT_URL: https://s3.7thseraph.org
           MINIO_S3_BUCKET: wiki.avakot.org
           TARGET_DIR: oreo.temp
-          # RELEASE_TAG is removed as it's not used in the updated S3 path or command
         run: |
           set -e
           SOURCE_PATH="." # Source is the root of the repository
-          # S3_TARGET_PATH uploads to the root of the TARGET_DIR
           S3_TARGET_PATH="s3://${MINIO_S3_BUCKET}/${TARGET_DIR}/"
 
-          echo "Uploading .lua files from ${SOURCE_PATH} to ${S3_TARGET_PATH}"
+          echo "Uploading .lua files and conf/ directory from ${SOURCE_PATH} to ${S3_TARGET_PATH}"
 
-          # Recursively copy only .lua files from the source path to S3
-          # Exclude all files first, then include .lua files.
-          # Add specific directory/file exclusions as needed.
+          # First, upload .lua files
           aws s3 cp "${SOURCE_PATH}" "${S3_TARGET_PATH}" \
             --recursive \
             --exclude "*" \
@@ -44,5 +40,15 @@ jobs:
             --exclude ".github/*" \
             --endpoint-url ${AWS_S3_ENDPOINT_URL}
 
-          echo "Lua files upload complete."
+          # Then, upload conf directory and its contents
+          if [ -d "${SOURCE_PATH}/conf" ]; then
+            echo "Uploading conf/ directory..."
+            aws s3 cp "${SOURCE_PATH}/conf" "${S3_TARGET_PATH}conf" \
+              --recursive \
+              --endpoint-url ${AWS_S3_ENDPOINT_URL}
+          else
+            echo "conf/ directory not found. Skipping."
+          fi
+
+          echo "Upload complete."
         shell: bash

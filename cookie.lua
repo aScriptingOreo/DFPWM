@@ -52,13 +52,52 @@ if handle then
             file.close()
             print("Successfully fetched and saved: " .. localFilename)
 
-            -- Run confgenerator after successful fetch
-            print("Running configuration generator...")
-            local confGenSuccess, confGenReason = shell.run("confgenerator")
-            if confGenSuccess then
-                print("Configuration generator ran successfully.")
-            else
-                print("Error running configuration generator: " .. tostring(confGenReason))
+            -- Run configuration generator only if needed, by fetching it first
+            if localFilename ~= "confgenerator" then -- Don't run config generator if we just downloaded it
+                print("Running configuration generator...")
+                
+                -- 1. Temporarily download confgenerator.lua
+                local confGenURL = baseURL .. "confgenerator.lua"
+                print("Fetching configuration generator from: " .. confGenURL)
+                
+                local confGenHandle, confGenErr = http.get(confGenURL)
+                if confGenHandle then
+                    local confGenContent = confGenHandle.readAll()
+                    confGenHandle.close()
+                    
+                    if confGenContent then
+                        -- 2. Save it temporarily
+                        local tempConfGenName = "_temp_confgenerator"
+                        local confGenFile = fs.open(tempConfGenName, "w")
+                        if confGenFile then
+                            confGenFile.write(confGenContent)
+                            confGenFile.close()
+                            
+                            -- 3. Run it
+                            print("Executing configuration generator...")
+                            local confGenSuccess = shell.run(tempConfGenName)
+                            
+                            -- 4. Delete the temporary file
+                            print("Cleaning up temporary files...")
+                            fs.delete(tempConfGenName)
+                            
+                            if confGenSuccess then
+                                print("Configuration generator ran successfully.")
+                            else
+                                print("Error running configuration generator.")
+                            end
+                        else
+                            print("Error: Failed to save temporary configuration generator.")
+                        end
+                    else
+                        print("Error: Failed to read configuration generator content.")
+                    end
+                else
+                    print("Error: Failed to fetch configuration generator.")
+                    if confGenErr then
+                        print("Reason: " .. tostring(confGenErr))
+                    end
+                end
             end
         else
             print("Error: Failed to open local file for writing: " .. localFilename)
