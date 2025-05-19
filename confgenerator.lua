@@ -108,7 +108,8 @@ end
 local function loadLuaStringAsTable(luaString, sourceName)
     logDebug("Loading Lua string as table from: " .. sourceName)
     
-    local func, err = load("return " .. luaString, sourceName)
+    -- Don't add 'return' to the string - assume the config file already has it
+    local func, err = load(luaString, sourceName)
     if not func then
         logDebug("Error loading Lua string: " .. (err or "Unknown error"))
         return nil
@@ -231,14 +232,22 @@ local function downloadAndProcessConfig(configPath, configName)
         return nil
     end
     
-    -- Parse the config content
-    local configTable = loadLuaFileAsTable(tmpPath)
+    -- First, try to parse the config content directly
+    local configTable = loadLuaStringAsTable(content, configName)
+    
+    -- If that fails, try to load it from the file
+    if not configTable then
+        logDebug("Failed to parse config content directly, trying to load from file")
+        configTable = loadLuaFileAsTable(tmpPath)
+    end
     
     -- Clean up temp file
     if fs.exists(tmpPath) then fs.delete(tmpPath) end
     
     if not configTable then
         logDebug("Failed to parse config content for: " .. configName)
+        -- Log the content to help debug
+        logDebug("Config content: " .. string.sub(content, 1, 100) .. (string.len(content) > 100 and "..." or ""))
         return nil
     end
     
