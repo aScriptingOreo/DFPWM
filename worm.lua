@@ -1,78 +1,95 @@
 -- worm.lua
--- Relies on /cookieSuite/conf.lua for its settings.
+-- Strictly relies on /cookieSuite/conf.lua for settings with no fallbacks.
 
-local CONFIG_FILE_PATH = "/cookieSuite/conf.lua"
-local CFG = {} -- Will hold effective configuration
+local CONFIG_DIR = "/cookieSuite"
+local CONFIG_FILE_PATH = CONFIG_DIR .. "/conf.lua"
+local LOG_DIR = CONFIG_DIR .. "/log"
+local LOG_FILE_PATH = LOG_DIR .. "/worm.log"
 
-local function loadConfiguration()
-    if not fs.exists(CONFIG_FILE_PATH) then
-        print("CRITICAL: Main config file not found: " .. CONFIG_FILE_PATH)
-        return false
+-- Initialize logging
+local function ensureLogDir()
+    if not fs.isDir(LOG_DIR) then
+        fs.makeDir(LOG_DIR)
     end
-    local func, loadErr = loadfile(CONFIG_FILE_PATH)
-    if not func then
-        print("CRITICAL: Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(loadErr))
-        return false
-    end
-    local success, resultTable = pcall(func)
-    if not success or type(resultTable) ~= "table" then
-        print("CRITICAL: Error executing or parsing config file: " .. CONFIG_FILE_PATH)
-        if not success then print("  Reason: " .. tostring(resultTable)) end
-        return false
-    end
-    print("Loaded main configuration from " .. CONFIG_FILE_PATH)
-
-    if resultTable.global and type(resultTable.global) == "table" then
-        for k, v in pairs(resultTable.global) do CFG[k] = v end
-    end
-    if resultTable.worm and type(resultTable.worm) == "table" then
-        for k, v in pairs(resultTable.worm) do CFG[k] = v end
-    else
-        print("Warning: 'worm' section not found in " .. CONFIG_FILE_PATH .. ". Critical settings might be missing.")
-    end
-    return true
 end
 
-if not loadConfiguration() then
-    -- Provide absolutely essential defaults or error out
-    CFG.monitorSide = CFG.monitorSide or "left"
-    CFG.initialSpeed = CFG.initialSpeed or 0.1
-    CFG.startLength = CFG.startLength or 1
-    CFG.foodChar = CFG.foodChar or "*"
-    CFG.wormChars = CFG.wormChars or {
-        HORIZONTAL = "-", VERTICAL = "|", TOP_LEFT = "+", TOP_RIGHT = "+",
-        BOTTOM_LEFT = "+", BOTTOM_RIGHT = "+", DOT = "#"
-    }
-    print("Attempting to run with minimal defaults due to configuration load failure.")
+local function logMessage(message)
+    ensureLogDir()
+    
+    -- Create a new log file each time the script runs
+    local mode = fs.exists(LOG_FILE_PATH) and "a" or "w"
+    local file = fs.open(LOG_FILE_PATH, mode)
+    if file then
+        file.writeLine("[" .. os.date("%H:%M:%S") .. "] " .. message)
+        file.close()
+    end
 end
 
--- Define script "constants" and variables from CFG.
-local monitorSide = CFG.monitorSide
-local INITIAL_SPEED = CFG.initialSpeed
-local START_LENGTH = CFG.startLength
-local FOOD_CHAR = CFG.foodChar
-local WORM_CHARS = CFG.wormChars
+-- Start fresh log
+if fs.exists(LOG_FILE_PATH) then
+    fs.delete(LOG_FILE_PATH)
+end
+logMessage("Starting worm.lua")
+
+-- Load configuration strictly from conf.lua
+logMessage("Loading configuration from: " .. CONFIG_FILE_PATH)
+if not fs.exists(CONFIG_FILE_PATH) then
+    local errMsg = "CRITICAL: Configuration file not found: " .. CONFIG_FILE_PATH
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+local func, loadErr = loadfile(CONFIG_FILE_PATH)
+if not func then
+    local errMsg = "CRITICAL: Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(loadErr)
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+local success, config = pcall(func)
+if not success or type(config) ~= "table" then
+    local errMsg = "CRITICAL: Error executing config file: " .. CONFIG_FILE_PATH
+    if not success then errMsg = errMsg .. " - " .. tostring(config) end
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+-- Check for worm section
+if not config.worm or type(config.worm) ~= "table" then
+    local errMsg = "CRITICAL: Missing 'worm' section in configuration"
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+-- Extract required configuration values
+local monitorSide = config.worm.monitorSide
+local INITIAL_SPEED = config.worm.initialSpeed
+local START_LENGTH = config.worm.startLength
+local FOOD_CHAR = config.worm.foodChar
+local WORM_CHARS = config.worm.wormChars
 local EMPTY_CHAR = " "
 
+-- Validate required configuration
 if not monitorSide or not INITIAL_SPEED or not START_LENGTH or not FOOD_CHAR or not WORM_CHARS then
-    error("Essential worm configuration missing. Please check /cookieSuite/conf.lua")
+    local errMsg = "CRITICAL: Missing required configuration values in worm section"
+    logMessage(errMsg)
+    error(errMsg)
 end
 
-local monitor = peripheral.wrap(monitorSide) -- Default, will be overridden by config if available
+logMessage("Using configuration: monitorSide=" .. monitorSide .. 
+           ", initialSpeed=" .. INITIAL_SPEED .. ", startLength=" .. START_LENGTH)
+
+-- Initialize monitor
+local monitor = peripheral.wrap(monitorSide)
 if not monitor then
-    error("Monitor not found on side: " .. monitorSide .. ". Please attach one or change the side.")
+    local errMsg = "Monitor not found on side: " .. monitorSide
+    logMessage(errMsg)
+    error(errMsg)
 end
 
-local term_target = term.redirect(monitor) -- Redirect terminal output to the monitor
-
+local term_target = term.redirect(monitor)
 local W, H = monitor.getSize()
-
--- Game Configuration using effectiveConfig
--- local WORM_CHARS = effectiveConfig.wormChars
--- local FOOD_CHAR = effectiveConfig.foodChar
--- local EMPTY_CHAR = " "
--- local INITIAL_SPEED = effectiveConfig.initialSpeed
--- local START_LENGTH = effectiveConfig.startLength
+logMessage("Monitor size: " .. W .. "x" .. H)
 
 -- Game State
 local worm

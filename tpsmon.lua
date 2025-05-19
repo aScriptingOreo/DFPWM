@@ -1,102 +1,135 @@
 -- tpsmon.lua
 -- Reads redstone signal from a specified side and displays it on a monitor.
--- Relies on /cookieSuite/conf.lua for its settings.
+-- Strictly relies on /cookieSuite/conf.lua for its settings with no fallbacks.
 
-local CONFIG_FILE_PATH = "/cookieSuite/conf.lua"
-local CFG = {} -- Will hold effective configuration
+local CONFIG_DIR = "/cookieSuite"
+local CONFIG_FILE_PATH = CONFIG_DIR .. "/conf.lua"
+local LOG_DIR = CONFIG_DIR .. "/log"
+local LOG_FILE_PATH = LOG_DIR .. "/tpsmon.log"
 
-local function loadConfiguration()
-    if not fs.exists(CONFIG_FILE_PATH) then
-        print("CRITICAL: Main config file not found: " .. CONFIG_FILE_PATH)
-        return false
+-- Initialize logging
+local function ensureLogDir()
+    if not fs.isDir(LOG_DIR) then
+        fs.makeDir(LOG_DIR)
     end
-
-    local func, loadErr = loadfile(CONFIG_FILE_PATH)
-    if not func then
-        print("CRITICAL: Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(loadErr))
-        return false
-    end
-
-    local success, resultTable = pcall(func)
-    if not success or type(resultTable) ~= "table" then
-        print("CRITICAL: Error executing or parsing config file: " .. CONFIG_FILE_PATH)
-        if not success then print("  Reason: " .. tostring(resultTable)) end
-        return false
-    end
-    print("Loaded main configuration from " .. CONFIG_FILE_PATH)
-
-    if resultTable.global and type(resultTable.global) == "table" then
-        for k, v in pairs(resultTable.global) do CFG[k] = v end
-    end
-    if resultTable.tpsmon and type(resultTable.tpsmon) == "table" then
-        for k, v in pairs(resultTable.tpsmon) do CFG[k] = v end
-    else
-        print("Warning: 'tpsmon' section not found in " .. CONFIG_FILE_PATH .. ". Critical settings might be missing.")
-    end
-    return true
 end
 
-if not loadConfiguration() then
-    -- Provide absolutely essential defaults or error out
-    CFG.monitorSide = CFG.monitorSide or "top" -- Critical default
-    CFG.redstoneSourceSide = CFG.redstoneSourceSide or "bottom" -- Critical default
-    CFG.updateInterval = CFG.updateInterval or 1
-    CFG.title = CFG.title or "TPS Monitor (Config Error)"
-    print("Attempting to run with minimal defaults due to configuration load failure.")
+local function logMessage(message)
+    ensureLogDir()
+    
+    -- Create a new log file each time the script runs
+    local mode = fs.exists(LOG_FILE_PATH) and "a" or "w"
+    local file = fs.open(LOG_FILE_PATH, mode)
+    if file then
+        file.writeLine("[" .. os.date("%H:%M:%S") .. "] " .. message)
+        file.close()
+    end
 end
 
--- Use CFG for script operation
-local MONITOR_SIDE = CFG.monitorSide
-local REDSTONE_SOURCE_SIDE = CFG.redstoneSourceSide
-local UPDATE_INTERVAL = CFG.updateInterval
-local MONITOR_TITLE = CFG.title
+-- Start fresh log
+if fs.exists(LOG_FILE_PATH) then
+    fs.delete(LOG_FILE_PATH)
+end
+logMessage("Starting tpsmon.lua")
 
+-- Load configuration strictly from conf.lua
+logMessage("Loading configuration from: " .. CONFIG_FILE_PATH)
+if not fs.exists(CONFIG_FILE_PATH) then
+    local errMsg = "CRITICAL: Configuration file not found: " .. CONFIG_FILE_PATH
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+local func, loadErr = loadfile(CONFIG_FILE_PATH)
+if not func then
+    local errMsg = "CRITICAL: Error loading config file: " .. CONFIG_FILE_PATH .. " - " .. tostring(loadErr)
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+local success, config = pcall(func)
+if not success or type(config) ~= "table" then
+    local errMsg = "CRITICAL: Error executing config file: " .. CONFIG_FILE_PATH
+    if not success then errMsg = errMsg .. " - " .. tostring(config) end
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+-- Check for tpsmon section
+if not config.tpsmon or type(config.tpsmon) ~= "table" then
+    local errMsg = "CRITICAL: Missing 'tpsmon' section in configuration"
+    logMessage(errMsg)
+    error(errMsg)
+end
+
+-- Extract required configuration values
+local MONITOR_SIDE = config.tpsmon.monitorSide
+local REDSTONE_SOURCE_SIDE = config.tpsmon.redstoneSourceSide
+local UPDATE_INTERVAL = config.tpsmon.updateInterval
+local MONITOR_TITLE = config.tpsmon.title
+
+-- Validate required configuration
 if not MONITOR_SIDE or not REDSTONE_SOURCE_SIDE or not UPDATE_INTERVAL or not MONITOR_TITLE then
-    error("Essential tpsmon configuration missing. Please check /cookieSuite/conf.lua")
+    local errMsg = "CRITICAL: Missing required configuration values in tpsmon section"
+    logMessage(errMsg)
+    error(errMsg)
 end
+
+logMessage("Using configuration: monitorSide=" .. MONITOR_SIDE .. ", redstoneSourceSide=" .. 
+           REDSTONE_SOURCE_SIDE .. ", updateInterval=" .. UPDATE_INTERVAL)
 
 -- Attempt to wrap peripherals
 local mon = peripheral.wrap(MONITOR_SIDE)
 if not mon then
-    error("Monitor not found on side: " .. MONITOR_SIDE .. ". Please attach one or change the side.")
+    local errMsg = "Monitor not found on side: " .. MONITOR_SIDE
+    logMessage(errMsg)
+    error(errMsg)
 end
 
 local rsSource = peripheral.wrap(REDSTONE_SOURCE_SIDE)
 if not rsSource then
-    error("Redstone source not found on side: " .. REDSTONE_SOURCE_SIDE .. ". Please attach one.")
+    local errMsg = "Redstone source not found on side: " .. REDSTONE_SOURCE_SIDE
+    logMessage(errMsg)
+    error(errMsg)
 end
 
--- Check if the redstone source has a method to get redstone input
--- Common methods are getAnalogInput (for direct strength) or getInput (for boolean state)
--- We'll prioritize getAnalogInput for strength 0-15
-local readSignalFunction -- Renamed for clarity
+-- Determine method to read redstone signal
+local readSignalFunction
 if rsSource.getAnalogInput then
     readSignalFunction = function() return rsSource.getAnalogInput(REDSTONE_SOURCE_SIDE) end
-elseif rsSource.getInput then -- Fallback for simple on/off if getAnalogInput isn't there
+    logMessage("Using getAnalogInput method for redstone reading")
+elseif rsSource.getInput then
     readSignalFunction = function() return rsSource.getInput(REDSTONE_SOURCE_SIDE) and 15 or 0 end
+    logMessage("Using getInput method for redstone reading")
 else
-    error("Peripheral on side '" .. REDSTONE_SOURCE_SIDE .. "' does not support getAnalogInput or getInput. Cannot read redstone signal.")
+    local errMsg = "Peripheral on side '" .. REDSTONE_SOURCE_SIDE .. "' does not support redstone input methods"
+    logMessage(errMsg)
+    error(errMsg)
 end
 
-local term_target_mon = term.current() -- Save current terminal target
-term.redirect(mon) -- Redirect terminal output to the monitor
-
+-- Redirect output to monitor
+local term_target_mon = term.current()
+term.redirect(mon)
 mon.clear()
+
+-- Display title
 mon.setCursorPos(1, 1)
-mon.write(MONITOR_TITLE) -- Use configured title
+mon.write(MONITOR_TITLE)
+logMessage("Started monitoring with title: " .. MONITOR_TITLE)
 
 local function displaySignalStrength()
     local strength = readSignalFunction()
+    logMessage("Read signal strength: " .. strength)
 
     mon.setCursorPos(1, 3)
     mon.clearLine()
-    mon.write("Signal (0-15): " .. string.format("%2d", strength)) -- Format to take 2 spaces
+    mon.write("Signal (0-15): " .. string.format("%2d", strength))
 
     -- Visual bar
     local w, h = mon.getSize()
-    local barWidth = w - 2 -- Max width for bar, leaving space for borders [ ]
+    local barWidth = w - 2
     local filledWidth = 0
-    if strength > 0 then -- Avoid division by zero if max is 0 or strength is 0
+    if strength > 0 then
         filledWidth = math.floor((strength / 15) * barWidth)
     end
     
@@ -107,18 +140,22 @@ end
 
 -- Main loop
 local running = true
+logMessage("Entering main monitoring loop")
 while running do
     displaySignalStrength()
     
-    -- Handle events to allow exiting (e.g., Ctrl+T)
-    local event, p1 = os.pullEvent("timer")
+    -- Handle events
+    local timer_id = os.startTimer(UPDATE_INTERVAL)
+    local event, p1 = os.pullEvent()
+    
     if event == "terminate" then
         running = false
+        logMessage("Received terminate signal, stopping")
     end
-    sleep(UPDATE_INTERVAL)
 end
 
--- Restore terminal
+-- Cleanup
 mon.clear()
 term.redirect(term_target_mon)
+logMessage("TPS Monitor stopped")
 print("TPS Monitor stopped.")
