@@ -295,12 +295,32 @@ local function commandLog(specificFile)
     
     -- Upload the combined log file to Pastebin
     print("Uploading combined logs to Pastebin...")
-    local success, pastebinId = shell.run("pastebin", "put", tempLogFile)
+    
+    -- Capture output from pastebin separately to avoid nil errors
+    -- We'll redirect the output to a temporary file
+    local tempOutputFile = os.tmpname and os.tmpname() or "__pastebin_output.tmp"
+    local redirectCommand = "pastebin put " .. tempLogFile .. " > " .. tempOutputFile
+    local success = shell.run(redirectCommand)
     
     if success then
-        print("Successfully uploaded combined logs to Pastebin!")
-        print("Pastebin ID: " .. pastebinId)
-        print("URL: https://pastebin.com/" .. pastebinId)
+        -- Read the output file to get the pastebin ID
+        local outputFile = fs.open(tempOutputFile, "r")
+        local outputText = outputFile and outputFile.readAll() or ""
+        if outputFile then outputFile.close() end
+        
+        -- Clean up
+        if fs.exists(tempOutputFile) then fs.delete(tempOutputFile) end
+        
+        -- Extract pastebin ID from output text if possible
+        local pastebinId = outputText:match("pastebin%.com/(%w+)")
+        
+        if pastebinId then
+            print("Successfully uploaded combined logs to Pastebin!")
+            print("Pastebin ID: " .. pastebinId)
+        else
+            print("Successfully uploaded to Pastebin, but couldn't extract URL.")
+            print("Please check the command line for the URL.")
+        end
         
         -- Save a copy of the combined log with timestamp
         local timestamp = os.date("%Y%m%d_%H%M%S")
@@ -309,7 +329,6 @@ local function commandLog(specificFile)
         print("Saved a copy of combined logs to: " .. savedCopy)
     else
         print("Error uploading to Pastebin. Please check your network connection.")
-        print("Output: " .. tostring(pastebinId))
     end
     
     -- Clean up the temporary file
