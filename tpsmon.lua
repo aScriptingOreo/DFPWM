@@ -20,11 +20,11 @@ end
 -- Check if the redstone source has a method to get redstone input
 -- Common methods are getAnalogInput (for direct strength) or getInput (for boolean state)
 -- We'll prioritize getAnalogInput for strength 0-15
-local сигналFunction
+local readTpsFunciton
 if rsSource.getAnalogInput then
-    сигналFunction = function() return rsSource.getAnalogInput(REDSTONE_SOURCE_SIDE) end
+    readTpsFunciton = function() return rsSource.getAnalogInput(REDSTONE_SOURCE_SIDE) end
 elseif rsSource.getInput then -- Fallback for simple on/off if getAnalogInput isn't there
-    сигналFunction = function() return rsSource.getInput(REDSTONE_SOURCE_SIDE) and 15 or 0 end
+    readTpsFunciton = function() return rsSource.getInput(REDSTONE_SOURCE_SIDE) and 15 or 0 end
 else
     error("Peripheral on side '" .. REDSTONE_SOURCE_SIDE .. "' does not support getAnalogInput or getInput. Cannot read redstone signal.")
 end
@@ -37,7 +37,7 @@ mon.setCursorPos(1, 1)
 mon.write("Redstone Signal Monitor")
 
 local function displaySignalStrength()
-    local strength = сигналFunction()
+    local strength = readTpsFunciton()
 
     mon.setCursorPos(1, 3)
     mon.clearLine()
